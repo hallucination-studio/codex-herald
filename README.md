@@ -126,6 +126,19 @@ user configuration in one command:
 npx --yes codex-herald@latest setup
 ~~~
 
+For a one-step iMessage setup, provide the recipient explicitly. Herald writes
+the <code>phone</code> destination and immediately sends one check notification:
+
+~~~bash
+npx --yes codex-herald@latest setup --imessage-recipient "you@example.com"
+~~~
+
+The command exits <code>0</code> only when the check is accepted. If macOS
+permission or Messages configuration blocks the send, it exits <code>1</code>
+but keeps the valid config so you can authorize Messages and retry with
+<code>codex-herald test phone</code>. The recipient is not printed or stored in
+the receipt, although your shell may retain the command in its history.
+
 This uses npm's execution cache and does not require a global CLI install. The
 command creates the configuration directory with mode <code>0700</code> and
 the config file with mode <code>0600</code>. Re-running it will not replace an
@@ -266,7 +279,7 @@ Only enable HTTP for a destination you control and understand. See the
 
 | Command | Behavior |
 | --- | --- |
-| <code>codex-herald setup [--config PATH] [--force]</code> | Create a safe starter config; <code>--force</code> replaces an existing regular file |
+| <code>codex-herald setup [--config PATH] [--force] [--imessage-recipient RECIPIENT]</code> | Create a safe starter config; an explicit iMessage recipient creates <code>phone</code> and immediately sends one check |
 | <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Send a real test notification and print its receipt |
 | <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg availability, receipt path, and Hook trust guidance without sending a notification |
 | <code>codex-herald ingest --source codex-stop [--config PATH]</code> | Non-interactive adapter used by the bundled Stop Hook |

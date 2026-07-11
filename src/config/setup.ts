@@ -32,6 +32,7 @@ max_chars = 500
 
 export interface SetupConfigOptions {
   force?: boolean;
+  imessageRecipient?: string;
 }
 
 export async function setupConfig(
@@ -39,10 +40,11 @@ export async function setupConfig(
   options: SetupConfigOptions = {},
 ): Promise<"created" | "replaced"> {
   const directory = dirname(path);
+  const content = configContent(options.imessageRecipient);
   await ensureSafeDirectory(directory);
 
   if (!options.force) {
-    await createExclusive(path);
+    await createExclusive(path, content);
     return "created";
   }
 
@@ -55,7 +57,7 @@ export async function setupConfig(
     `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
   );
   try {
-    await writeConfigFile(temporaryPath);
+    await writeConfigFile(temporaryPath, content);
     await replacePath(temporaryPath, path);
   } catch (error) {
     await unlinkIfPresent(temporaryPath);
@@ -65,9 +67,9 @@ export async function setupConfig(
   return existing ? "replaced" : "created";
 }
 
-async function createExclusive(path: string): Promise<void> {
+async function createExclusive(path: string, content: string): Promise<void> {
   try {
-    await writeConfigFile(path);
+    await writeConfigFile(path, content);
   } catch (error) {
     if (isErrno(error, "EEXIST")) {
       const existing = await existingStats(path);
@@ -80,19 +82,48 @@ async function createExclusive(path: string): Promise<void> {
   }
 }
 
-async function writeConfigFile(path: string): Promise<void> {
+async function writeConfigFile(path: string, content: string): Promise<void> {
   const handle = await open(
     path,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_FOLLOW,
     FILE_MODE,
   );
   try {
-    await handle.writeFile(DEFAULT_CONFIG, "utf8");
+    await handle.writeFile(content, "utf8");
     await handle.sync();
     await handle.chmod(FILE_MODE);
   } finally {
     await handle.close();
   }
+}
+
+function configContent(imessageRecipient: string | undefined): string {
+  if (imessageRecipient === undefined) {
+    return DEFAULT_CONFIG;
+  }
+  if (imessageRecipient.length === 0) {
+    throw new HeraldError("CONFIG_INVALID", "iMessage recipient cannot be empty");
+  }
+
+  return `# Codex Herald user configuration
+# This file contains recipient metadata. Keep it private.
+version = 1
+
+[destinations.phone]
+transport = "imessage"
+driver = "imsg"
+recipient = ${JSON.stringify(imessageRecipient)}
+
+[[routes]]
+events = ["turn.finished"]
+destinations = ["phone"]
+template = "compact"
+
+[privacy]
+include_prompt = false
+include_summary = true
+max_chars = 500
+`;
 }
 
 async function replacePath(temporaryPath: string, path: string): Promise<void> {

@@ -22,6 +22,8 @@ end-device delivery.
   `imsg`.
 - I can run `setup`, `test <destination>`, and `doctor` without triggering a
   Codex turn.
+- I can explicitly pass an iMessage recipient to `setup`; Herald writes the
+  `phone` destination and immediately sends one check notification.
 - I can inspect `accepted`, `failed`, and `skipped` receipts without exposing
   message bodies or secrets.
 
@@ -66,7 +68,7 @@ npm audit --audit-level=high
 Public CLI:
 
 ```text
-codex-herald setup [--config <path>] [--force]
+codex-herald setup [--config <path>] [--force] [--imessage-recipient <recipient>]
 codex-herald test <destination> [--config <path>] [--json]
 codex-herald doctor [--config <path>] [--json]
 codex-herald ingest --source codex-stop [--config <path>]
@@ -74,8 +76,11 @@ codex-herald --help
 codex-herald --version
 ```
 
-`ingest` is a non-interactive hook adapter. It reads one JSON object from stdin,
-writes nothing to stdout, and never asks for input.
+With `--imessage-recipient`, `setup` creates a single `phone` destination and
+route, then reuses the same delivery path as `test phone`. Plain `setup` remains
+side-effect free beyond writing the empty starter config. `ingest` is a
+non-interactive hook adapter. It reads one JSON object from stdin, writes
+nothing to stdout, and never asks for input.
 
 ## Project structure
 
@@ -274,7 +279,8 @@ export async function deliver(
   ids, secret parsing, URL policy, receipt redaction, duplicate detection.
 - Boundary tests: webhook server on loopback; fake `imsg` executable; Keychain
   process adapter; stdin size/JSON handling; receipt file permissions.
-- CLI tests: `setup`, `test`, `doctor`, and `ingest` exit/stdout/stderr contracts.
+- CLI tests: plain setup, setup-and-check, `test`, `doctor`, and `ingest`
+  exit/stdout/stderr contracts.
 - Plugin validation: official `plugin-creator` validator plus JSON parsing.
 - CI gates: lint, typecheck, tests, build, plugin validation, and high-severity
   npm audit on pushes and pull requests.
@@ -313,7 +319,8 @@ replaced with localhost servers or executable fakes; no real messages are sent.
 - One failing destination does not prevent another from being accepted.
 - `ingest` writes no stdout and never returns Codex continuation controls.
 - Config is never loaded from the active repository.
-- `setup`, `test`, and `doctor` work against an isolated temporary config.
+- `setup`, setup-and-check, `test`, and `doctor` work against an isolated
+  temporary config.
 - `npm run check`, plugin validation, and `npm audit --audit-level=high` pass.
 - README documents installation, hook trust, configuration, privacy, semantics,
   troubleshooting, and the exact current `imsg` requirement.

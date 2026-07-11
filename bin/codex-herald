@@ -15577,9 +15577,10 @@ max_chars = 500
 `;
 async function setupConfig(path, options = {}) {
   const directory = dirname(path);
+  const content = configContent(options.imessageRecipient);
   await ensureSafeDirectory(directory);
   if (!options.force) {
-    await createExclusive(path);
+    await createExclusive(path, content);
     return "created";
   }
   const existing = await existingStats(path);
@@ -15591,7 +15592,7 @@ async function setupConfig(path, options = {}) {
     `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
   );
   try {
-    await writeConfigFile(temporaryPath);
+    await writeConfigFile(temporaryPath, content);
     await replacePath(temporaryPath, path);
   } catch (error51) {
     await unlinkIfPresent(temporaryPath);
@@ -15599,9 +15600,9 @@ async function setupConfig(path, options = {}) {
   }
   return existing ? "replaced" : "created";
 }
-async function createExclusive(path) {
+async function createExclusive(path, content) {
   try {
-    await writeConfigFile(path);
+    await writeConfigFile(path, content);
   } catch (error51) {
     if (isErrno2(error51, "EEXIST")) {
       const existing = await existingStats(path);
@@ -15613,19 +15614,46 @@ async function createExclusive(path) {
     throw error51;
   }
 }
-async function writeConfigFile(path) {
+async function writeConfigFile(path, content) {
   const handle = await open2(
     path,
     constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY | NO_FOLLOW,
     FILE_MODE
   );
   try {
-    await handle.writeFile(DEFAULT_CONFIG, "utf8");
+    await handle.writeFile(content, "utf8");
     await handle.sync();
     await handle.chmod(FILE_MODE);
   } finally {
     await handle.close();
   }
+}
+function configContent(imessageRecipient) {
+  if (imessageRecipient === void 0) {
+    return DEFAULT_CONFIG;
+  }
+  if (imessageRecipient.length === 0) {
+    throw new HeraldError("CONFIG_INVALID", "iMessage recipient cannot be empty");
+  }
+  return `# Codex Herald user configuration
+# This file contains recipient metadata. Keep it private.
+version = 1
+
+[destinations.phone]
+transport = "imessage"
+driver = "imsg"
+recipient = ${JSON.stringify(imessageRecipient)}
+
+[[routes]]
+events = ["turn.finished"]
+destinations = ["phone"]
+template = "compact"
+
+[privacy]
+include_prompt = false
+include_summary = true
+max_chars = 500
+`;
 }
 async function replacePath(temporaryPath, path) {
   try {
@@ -16585,7 +16613,7 @@ function failureCode(signal, fallback) {
 var VERSION = "0.1.0";
 var TEST_NOTIFICATION_BODY = "Test notification from Codex Herald.";
 var HELP = `Usage:
-  codex-herald setup [--config <path>] [--force]
+  codex-herald setup [--config <path>] [--force] [--imessage-recipient <recipient>]
   codex-herald test <destination> [--config <path>] [--json]
   codex-herald doctor [--config <path>] [--json]
   codex-herald ingest --source codex-stop [--config <path>]
@@ -16651,12 +16679,26 @@ async function runSetup(args, io, runtime) {
     strict: true,
     options: {
       config: { type: "string" },
-      force: { type: "boolean", default: false }
+      force: { type: "boolean", default: false },
+      "imessage-recipient": { type: "string" }
     }
   });
+  const imessageRecipient = parseSetupRecipient(values["imessage-recipient"]);
   const path = resolveConfigPath(configPathOptions(values.config, runtime));
-  const result = await setupConfig(path, { force: values.force });
+  const result = await setupConfig(path, {
+    force: values.force,
+    ...imessageRecipient ? { imessageRecipient } : {}
+  });
   io.stdout(`Configuration ${result}: ${path}`);
+  if (imessageRecipient) {
+    return testDestination(
+      "phone",
+      configPathOptions(path, runtime),
+      false,
+      io,
+      runtime
+    );
+  }
   io.stdout("Edit destinations and routes, then run codex-herald doctor.");
   return 0;
 }
@@ -16710,8 +16752,16 @@ async function runDestinationTest(args, io, runtime) {
   if (positionals.length !== 1 || !positionals[0]) {
     throw new CliUsageError("test requires one destination");
   }
-  const loaded = await loadConfig(configPathOptions(values.config, runtime));
-  const destinationId = positionals[0];
+  return testDestination(
+    positionals[0],
+    configPathOptions(values.config, runtime),
+    values.json,
+    io,
+    runtime
+  );
+}
+async function testDestination(destinationId, configOptions, json2, io, runtime) {
+  const loaded = await loadConfig(configOptions);
   if (!loaded.config.destinations[destinationId]) {
     throw new HeraldError(
       "DESTINATION_NOT_FOUND",
@@ -16752,7 +16802,7 @@ async function runDestinationTest(args, io, runtime) {
   if (!receipt) {
     throw new Error("Destination test produced no receipt");
   }
-  if (values.json) {
+  if (json2) {
     io.stdout(JSON.stringify(receipt));
   } else {
     io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
@@ -16761,6 +16811,16 @@ async function runDestinationTest(args, io, runtime) {
     );
   }
   return receipt.status === "accepted" ? 0 : 1;
+}
+function parseSetupRecipient(value) {
+  if (value === void 0) {
+    return void 0;
+  }
+  const recipient = value.trim();
+  if (recipient.length === 0 || recipient.length > 320 || new RegExp("\\p{Cc}", "u").test(value)) {
+    throw new CliUsageError("Invalid iMessage recipient");
+  }
+  return recipient;
 }
 async function runDoctor(args, io, runtime) {
   const { values } = parseArgs({

@@ -15,6 +15,8 @@ Initial MVP.
 - <code>codex-herald</code> CLI commands for <code>setup</code>,
   <code>test</code>, <code>doctor</code>, and non-interactive
   <code>ingest</code>.
+- One-step iMessage setup with an explicit recipient and immediate check
+  notification using the existing honest receipt semantics.
 - Normalization of Codex Stop facts to the channel-neutral
   <code>turn.finished</code> route event.
 - Strict TOML destinations, routes, compact templates, and summary privacy

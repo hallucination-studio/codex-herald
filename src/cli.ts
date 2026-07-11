@@ -93,7 +93,7 @@ interface DoctorReport {
 }
 
 const HELP = `Usage:
-  codex-herald setup [--config <path>] [--force]
+  codex-herald setup [--config <path>] [--force] [--imessage-recipient <recipient>]
   codex-herald test <destination> [--config <path>] [--json]
   codex-herald doctor [--config <path>] [--json]
   codex-herald ingest --source codex-stop [--config <path>]
@@ -181,11 +181,25 @@ async function runSetup(
     options: {
       config: { type: "string" },
       force: { type: "boolean", default: false },
+      "imessage-recipient": { type: "string" },
     },
   });
+  const imessageRecipient = parseSetupRecipient(values["imessage-recipient"]);
   const path = resolveConfigPath(configPathOptions(values.config, runtime));
-  const result = await setupConfig(path, { force: values.force });
+  const result = await setupConfig(path, {
+    force: values.force,
+    ...(imessageRecipient ? { imessageRecipient } : {}),
+  });
   io.stdout(`Configuration ${result}: ${path}`);
+  if (imessageRecipient) {
+    return testDestination(
+      "phone",
+      configPathOptions(path, runtime),
+      false,
+      io,
+      runtime,
+    );
+  }
   io.stdout("Edit destinations and routes, then run codex-herald doctor.");
   return 0;
 }
@@ -252,8 +266,23 @@ async function runDestinationTest(
     throw new CliUsageError("test requires one destination");
   }
 
-  const loaded = await loadConfig(configPathOptions(values.config, runtime));
-  const destinationId = positionals[0];
+  return testDestination(
+    positionals[0],
+    configPathOptions(values.config, runtime),
+    values.json,
+    io,
+    runtime,
+  );
+}
+
+async function testDestination(
+  destinationId: string,
+  configOptions: ConfigPathOptions,
+  json: boolean,
+  io: CliIo,
+  runtime: CliRuntime,
+): Promise<number> {
+  const loaded = await loadConfig(configOptions);
   if (!loaded.config.destinations[destinationId]) {
     throw new HeraldError(
       "DESTINATION_NOT_FOUND",
@@ -296,7 +325,7 @@ async function runDestinationTest(
     throw new Error("Destination test produced no receipt");
   }
 
-  if (values.json) {
+  if (json) {
     io.stdout(JSON.stringify(receipt));
   } else {
     io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
@@ -305,6 +334,17 @@ async function runDestinationTest(
     );
   }
   return receipt.status === "accepted" ? 0 : 1;
+}
+
+function parseSetupRecipient(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const recipient = value.trim();
+  if (recipient.length === 0 || recipient.length > 320 || /\p{Cc}/u.test(value)) {
+    throw new CliUsageError("Invalid iMessage recipient");
+  }
+  return recipient;
 }
 
 async function runDoctor(

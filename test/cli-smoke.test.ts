@@ -27,6 +27,7 @@ describe("codex-herald CLI", () => {
 
     assert.equal(exitCode, 0);
     assert.match(output.join("\n"), /codex-herald setup/);
+    assert.match(output.join("\n"), /--imessage-recipient/);
     assert.match(output.join("\n"), /codex-herald ingest/);
   });
 });

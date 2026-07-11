@@ -33,6 +33,32 @@ describe("setupConfig", () => {
     assert.equal(text, DEFAULT_CONFIG);
   });
 
+  it("creates a private routed iMessage config for an explicit recipient", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-herald-setup-"));
+    const path = join(root, "nested", "config.toml");
+    const recipient = 'quoted"handle\\test@example.com';
+
+    const result = await setupConfig(path, { imessageRecipient: recipient });
+    const directoryStats = await lstat(join(root, "nested"));
+    const stats = await lstat(path);
+    const config = parseConfigText(await readFile(path, "utf8"));
+
+    assert.equal(result, "created");
+    assert.equal(directoryStats.mode & 0o777, 0o700);
+    assert.equal(stats.mode & 0o777, 0o600);
+    assert.equal(config.destinations.phone?.transport, "imessage");
+    if (config.destinations.phone?.transport === "imessage") {
+      assert.equal(config.destinations.phone.recipient, recipient);
+    }
+    assert.deepEqual(config.routes, [
+      {
+        events: ["turn.finished"],
+        destinations: ["phone"],
+        template: "compact",
+      },
+    ]);
+  });
+
   it("refuses to replace an existing config without force", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-herald-setup-"));
     const path = join(root, "config.toml");

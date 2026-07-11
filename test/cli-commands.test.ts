@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { type CliIo, type CliRuntime, runCli } from "../src/cli.js";
+import { parseConfigText } from "../src/config/index.js";
 import type { DeliveryReceipt } from "../src/domain/types.js";
 
 describe("CLI commands", () => {
@@ -15,13 +16,110 @@ describe("CLI commands", () => {
     const exitCode = await runCli(
       ["setup", "--config", path],
       output.io,
-      runtime({ homeDir: root }),
+      runtime({
+        homeDir: root,
+        sendIMessage: async () => {
+          throw new Error("plain setup must not send a check notification");
+        },
+      }),
     );
 
     assert.equal(exitCode, 0);
     assert.match(output.stdout.join("\n"), /created/u);
     assert.match(output.stdout.join("\n"), new RegExp(escapeRegExp(path), "u"));
     assert.equal(output.stderr.length, 0);
+  });
+
+  it("setup configures an explicit iMessage recipient and sends a check", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
+    const configPath = join(root, "config", "config.toml");
+    const receiptPath = join(root, "receipts.ndjson");
+    const recipient = "private-imessage@example.com";
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["setup", "--config", configPath, "--imessage-recipient", recipient],
+      output.io,
+      runtime({
+        env: { CODEX_HERALD_RECEIPTS: receiptPath },
+        homeDir: root,
+        sendIMessage: async (destination) => {
+          assert.equal(destination.recipient, recipient);
+          return { status: "accepted", code: "imsg_accepted" };
+        },
+      }),
+    );
+
+    assert.equal(exitCode, 0);
+    assert.equal(output.stderr.length, 0);
+    assert.doesNotMatch(output.stdout.join("\n"), new RegExp(recipient, "u"));
+    assert.match(output.stdout.join("\n"), /phone: accepted \(imsg_accepted\)/u);
+    const config = parseConfigText(await readFile(configPath, "utf8"));
+    assert.equal(config.destinations.phone?.transport, "imessage");
+    if (config.destinations.phone?.transport === "imessage") {
+      assert.equal(config.destinations.phone.recipient, recipient);
+    }
+    assert.deepEqual(config.routes, [
+      {
+        events: ["turn.finished"],
+        destinations: ["phone"],
+        template: "compact",
+      },
+    ]);
+    const receiptText = await readFile(receiptPath, "utf8");
+    assert.doesNotMatch(receiptText, new RegExp(recipient, "u"));
+    const [receipt] = await readReceipts(receiptPath);
+    assert.equal(receipt?.status, "accepted");
+    assert.equal(receipt?.code, "imsg_accepted");
+  });
+
+  it("setup keeps the configured destination when the automatic check fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
+    const configPath = join(root, "config", "config.toml");
+    const receiptPath = join(root, "receipts.ndjson");
+    const recipient = "failed-check@example.com";
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["setup", "--config", configPath, "--imessage-recipient", recipient],
+      output.io,
+      runtime({
+        env: { CODEX_HERALD_RECEIPTS: receiptPath },
+        homeDir: root,
+        sendIMessage: async () => ({
+          status: "failed",
+          code: "driver_failed",
+        }),
+      }),
+    );
+
+    assert.equal(exitCode, 1);
+    assert.doesNotMatch(output.stdout.join("\n"), new RegExp(recipient, "u"));
+    assert.equal(output.stderr.length, 0);
+    const config = parseConfigText(await readFile(configPath, "utf8"));
+    assert.equal(config.destinations.phone?.transport, "imessage");
+    const receiptText = await readFile(receiptPath, "utf8");
+    assert.doesNotMatch(receiptText, new RegExp(recipient, "u"));
+    const [receipt] = await readReceipts(receiptPath);
+    assert.equal(receipt?.status, "failed");
+    assert.equal(receipt?.code, "driver_failed");
+  });
+
+  it("setup rejects an empty iMessage recipient before creating a config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
+    const configPath = join(root, "config", "config.toml");
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["setup", "--config", configPath, "--imessage-recipient", "   "],
+      output.io,
+      runtime({ homeDir: root }),
+    );
+
+    assert.equal(exitCode, 2);
+    assert.deepEqual(output.stdout, []);
+    assert.equal(output.stderr.length, 1);
+    await assert.rejects(readFile(configPath, "utf8"), { code: "ENOENT" });
   });
 
   it("ingest isolates destination failure and keeps hook stdout empty", async () => {

@@ -51,6 +51,11 @@ behavior.
 
 - Config files must be regular, owned by the current user, and inaccessible to
   group and other users. Setup creates them as `0600` in a `0700` directory.
+- `setup --imessage-recipient` is an explicit outbound-send opt-in. The
+  recipient is persisted only in the private config and is never echoed or
+  added to receipts. The setup command and later `imsg --to` child process do
+  receive it in argv, so shell history and same-user process inspection remain
+  local-host considerations.
 - Receipt directories and files are private and contain only allowlisted
   metadata. Accepted receipt checks are best-effort; overlapping Hook processes
   may deliver a duplicate.
