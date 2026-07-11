@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/codex-herald\" ingest --source codex-stop",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\bin\\codex-herald\" ingest --source codex-stop",
+            "timeout": 60,
+            "statusMessage": "Routing lifecycle notification"
+          }
+        ]
+      }
+    ]
+  }
+}

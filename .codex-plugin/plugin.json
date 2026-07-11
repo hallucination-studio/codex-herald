@@ -1,0 +1,26 @@
+{
+  "name": "codex-herald",
+  "version": "0.1.0",
+  "description": "Route Codex lifecycle events to wherever you are.",
+  "author": {
+    "name": "hallucination-studio",
+    "url": "https://github.com/hallucination-studio"
+  },
+  "homepage": "https://github.com/hallucination-studio/codex-herald",
+  "repository": "https://github.com/hallucination-studio/codex-herald",
+  "license": "MIT",
+  "keywords": ["codex", "notifications", "imessage", "webhook"],
+  "interface": {
+    "displayName": "Herald for Codex",
+    "shortDescription": "Route Codex lifecycle events to wherever you are.",
+    "longDescription": "A local-first, user-routed lifecycle delivery plugin for Codex.",
+    "developerName": "hallucination-studio",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Help me configure Herald for Codex.",
+      "Help me diagnose my Herald destinations."
+    ],
+    "brandColor": "#B7791F"
+  }
+}

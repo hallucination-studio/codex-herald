@@ -1,0 +1,62 @@
+{
+  "name": "codex-herald",
+  "version": "0.1.0",
+  "description": "Route Codex lifecycle events to wherever you are.",
+  "type": "module",
+  "license": "MIT",
+  "author": "hallucination-studio",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hallucination-studio/codex-herald.git"
+  },
+  "homepage": "https://github.com/hallucination-studio/codex-herald#readme",
+  "bugs": {
+    "url": "https://github.com/hallucination-studio/codex-herald/issues"
+  },
+  "keywords": [
+    "codex",
+    "notifications",
+    "imessage",
+    "webhook",
+    "lifecycle-hooks"
+  ],
+  "bin": {
+    "codex-herald": "bin/codex-herald"
+  },
+  "files": [
+    ".codex-plugin/",
+    "hooks/",
+    "bin/codex-herald",
+    "docs/",
+    "examples/config.toml",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "node scripts/test.mjs",
+    "validate:plugin": "node scripts/validate-plugin.mjs",
+    "pack:check": "node scripts/pack-check.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run validate:plugin && npm run pack:check",
+    "prepack": "npm run build && npm run validate:plugin"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "npm@11.6.2",
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@types/node": "22.20.1",
+    "esbuild": "0.28.1",
+    "ipaddr.js": "2.4.0",
+    "smol-toml": "1.7.0",
+    "typescript": "7.0.2",
+    "zod": "4.4.3"
+  }
+}

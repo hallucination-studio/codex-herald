@@ -1,0 +1,29 @@
+# Codex Herald example user configuration.
+# Store this outside project repositories and keep it private.
+version = 1
+
+[destinations.phone]
+transport = "imessage"
+driver = "imsg"
+# Reserved fictional NANP number; replace before use.
+recipient = "+12025550123"
+
+[destinations.ops]
+transport = "webhook"
+url = "$OPS_WEBHOOK_URL"
+allow_private_network = false
+allow_insecure_http = false
+
+[destinations.ops.headers]
+# Store the complete header value, such as "Bearer <token>".
+Authorization = "keychain://codex-herald/ops-authorization"
+
+[[routes]]
+events = ["turn.finished"]
+destinations = ["phone", "ops"]
+template = "compact"
+
+[privacy]
+include_prompt = false
+include_summary = true
+max_chars = 500
