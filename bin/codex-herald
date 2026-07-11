@@ -16316,11 +16316,30 @@ import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, isAbsolute as isAbsolute3, join as join4, parse as parse4 } from "node:path";
+import { performance as performance2 } from "node:perf_hooks";
 var INSPECTION_TIMEOUT_MS = 5e3;
 var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
 var MAX_VERSION_CHARS = 128;
+var OSASCRIPT_EXECUTABLE = "/usr/bin/osascript";
 var SAFE_CWD = parse4(process.execPath).root;
-async function inspectIMessage(platform = process.platform) {
+var IMESSAGE_READINESS_SCRIPT = `
+try
+  with timeout of 4 seconds
+    tell application id "com.apple.MobileSMS"
+      set imessageServices to services whose service type is iMessage
+      if (count imessageServices) is 0 then return "not_ready"
+      set targetService to item 1 of imessageServices
+      set serviceEnabled to enabled of targetService
+      set serviceConnected to (connection status of targetService is connected)
+      if serviceEnabled and serviceConnected then return "ready"
+    end tell
+  end timeout
+  return "not_ready"
+on error
+  return "check_failed"
+end try
+`;
+async function inspectIMessage(platform = process.platform, checkReadiness = checkIMessageReadiness) {
   if (platform !== "darwin") {
     return { ok: false, code: "driver_not_found" };
   }
@@ -16328,7 +16347,7 @@ async function inspectIMessage(platform = process.platform) {
   if (!executable) {
     return { ok: false, code: "driver_not_found" };
   }
-  const result = await runImsg(executable, ["--version"], INSPECTION_TIMEOUT_MS);
+  const result = await runProcess(executable, ["--version"], INSPECTION_TIMEOUT_MS);
   if (result.kind === "not_found") {
     return { ok: false, code: "driver_not_found" };
   }
@@ -16336,9 +16355,34 @@ async function inspectIMessage(platform = process.platform) {
     return { ok: false, code: "driver_failed" };
   }
   const version2 = firstLine(result.stdout);
-  return version2 ? { ok: true, code: "ready", version: version2 } : { ok: false, code: "driver_invalid_response" };
+  if (!version2) {
+    return { ok: false, code: "driver_invalid_response" };
+  }
+  const readiness = await checkReadiness(platform, INSPECTION_TIMEOUT_MS);
+  return readiness.ok ? { ok: true, code: "ready", version: version2 } : { ok: false, code: readiness.code };
 }
-async function sendIMessage(destination, _event, notification, platform = process.platform) {
+async function checkIMessageReadiness(platform = process.platform, timeoutMs = INSPECTION_TIMEOUT_MS, run = runProcess) {
+  if (platform !== "darwin") {
+    return { ok: false, code: "imessage_check_failed" };
+  }
+  const result = await run(
+    OSASCRIPT_EXECUTABLE,
+    ["-e", IMESSAGE_READINESS_SCRIPT],
+    timeoutMs
+  );
+  if (result.kind !== "exited") {
+    return { ok: false, code: "imessage_check_failed" };
+  }
+  switch (firstLine(result.stdout)) {
+    case "ready":
+      return { ok: true, code: "ready" };
+    case "not_ready":
+      return { ok: false, code: "imessage_not_ready" };
+    default:
+      return { ok: false, code: "imessage_check_failed" };
+  }
+}
+async function sendIMessage(destination, _event, notification, platform = process.platform, checkReadiness = checkIMessageReadiness) {
   if (platform !== "darwin") {
     return { status: "failed", code: "driver_not_found" };
   }
@@ -16346,7 +16390,21 @@ async function sendIMessage(destination, _event, notification, platform = proces
   if (!executable) {
     return { status: "failed", code: "driver_not_found" };
   }
-  const result = await runImsg(
+  const startedAt = performance2.now();
+  const readiness = await checkReadiness(
+    platform,
+    Math.min(INSPECTION_TIMEOUT_MS, destination.timeoutMs)
+  );
+  if (!readiness.ok) {
+    return { status: "failed", code: readiness.code };
+  }
+  const remainingTimeoutMs = Math.floor(
+    destination.timeoutMs - (performance2.now() - startedAt)
+  );
+  if (remainingTimeoutMs <= 0) {
+    return { status: "failed", code: "driver_timeout" };
+  }
+  const result = await runProcess(
     executable,
     [
       "send",
@@ -16358,7 +16416,7 @@ async function sendIMessage(destination, _event, notification, platform = proces
       "imessage",
       "--json"
     ],
-    destination.timeoutMs
+    remainingTimeoutMs
   );
   switch (result.kind) {
     case "not_found":
@@ -16393,7 +16451,7 @@ async function findImsg(searchPath = process.env.PATH) {
   }
   return null;
 }
-function runImsg(executable, args, timeoutMs) {
+function runProcess(executable, args, timeoutMs) {
   return new Promise((resolve) => {
     execFile2(
       executable,
@@ -16806,9 +16864,19 @@ async function testDestination(destinationId, configOptions, json2, io, runtime)
     io.stdout(JSON.stringify(receipt));
   } else {
     io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
-    io.stdout(
-      "accepted means the local transport accepted the request; it is not proof of delivery."
-    );
+    if (receipt.status === "accepted") {
+      io.stdout(
+        "accepted means the local transport accepted the request; it is not proof of delivery."
+      );
+    } else if (receipt.code === "imessage_not_ready") {
+      io.stdout(
+        "Open Messages > Settings > iMessage, sign in and enable the account, then retry."
+      );
+    } else if (receipt.code === "imessage_check_failed") {
+      io.stdout(
+        "Check that Messages is available and allow the app running Codex Herald to control it under System Settings > Privacy & Security > Automation, then retry."
+      );
+    }
   }
   return receipt.status === "accepted" ? 0 : 1;
 }

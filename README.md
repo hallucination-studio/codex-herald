@@ -133,9 +133,12 @@ the <code>phone</code> destination and immediately sends one check notification:
 npx --yes codex-herald@latest setup --imessage-recipient "you@example.com"
 ~~~
 
-The command exits <code>0</code> only when the check is accepted. If macOS
-permission or Messages configuration blocks the send, it exits <code>1</code>
-but keeps the valid config so you can authorize Messages and retry with
+Before sending, Herald verifies that Messages has an enabled, connected
+iMessage account. If the account is not ready, Herald does not invoke
+<code>imsg send</code>; the command exits <code>1</code>, keeps the valid config,
+and reports <code>imessage_not_ready</code>. If the account check itself cannot
+run, it reports <code>imessage_check_failed</code>; allow the app running Herald
+to control Messages under macOS Automation, then retry with
 <code>codex-herald test phone</code>. The recipient is not printed or stored in
 the receipt, although your shell may retain the command in its history.
 
@@ -226,9 +229,11 @@ npx --yes codex-herald@latest doctor
 npx --yes codex-herald@latest test ops --json
 ~~~
 
-<code>doctor</code> does not send a notification. <code>test</code> does, and
+<code>doctor</code> does not send a notification. For iMessage it checks both
+the <code>imsg</code> executable and the live Messages account state.
+<code>test</code> performs the same readiness check before its real send and
 reports <code>accepted</code> only when the selected transport accepts the
-request.
+request. A readiness check does not prove that a recipient is reachable.
 
 Supported secret references are exactly:
 
@@ -280,8 +285,8 @@ Only enable HTTP for a destination you control and understand. See the
 | Command | Behavior |
 | --- | --- |
 | <code>codex-herald setup [--config PATH] [--force] [--imessage-recipient RECIPIENT]</code> | Create a safe starter config; an explicit iMessage recipient creates <code>phone</code> and immediately sends one check |
-| <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Send a real test notification and print its receipt |
-| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg availability, receipt path, and Hook trust guidance without sending a notification |
+| <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Check destination readiness, send one real test notification, and print its receipt |
+| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg and Messages account readiness, receipt path, and Hook trust guidance without sending a notification |
 | <code>codex-herald ingest --source codex-stop [--config PATH]</code> | Non-interactive adapter used by the bundled Stop Hook |
 | <code>codex-herald --help</code> | Show CLI usage |
 | <code>codex-herald --version</code> | Show the package version |
@@ -300,6 +305,9 @@ or skipped results. <code>doctor</code> exits <code>0</code> only when the
 config, routes, and all configured destinations are ready. Interactive CLI
 argument errors exit <code>2</code>; every <code>ingest</code> error exits
 <code>1</code> so a usage failure can never become a Codex continuation signal.
+An iMessage readiness failure is reported locally and recorded as failed; it
+never triggers an implicit fallback destination and never blocks the Codex Stop
+Hook.
 
 ## Trust the bundled Stop Hook
 
@@ -317,7 +325,8 @@ local Hook change requires review again. Until trusted, Codex skips the Hook.
 The packaged definition invokes the plugin-local executable through
 <code>$PLUGIN_ROOT/bin/codex-herald</code>; it does not depend on a separately
 installed global CLI. Its 60-second budget covers the bounded worst-case
-32-destination fan-out. See the official [Codex Hooks documentation](https://developers.openai.com/codex/hooks).
+32-destination fan-out; iMessage readiness and send work share the existing
+per-destination deadline. See the official [Codex Hooks documentation](https://developers.openai.com/codex/hooks).
 
 ## What turn.finished means
 
@@ -399,8 +408,9 @@ overlapping Hook processes.
 Receipt statuses are intentionally conservative:
 
 - <code>accepted</code> for a webhook means Herald received HTTP 2xx.
-- <code>accepted</code> for imsg means the process exited 0 and returned the
-  expected <code>{"status":"sent"}</code> JSON shape.
+- <code>accepted</code> for imsg means the Messages account readiness check
+  passed, then the process exited 0 and returned the expected
+  <code>{"status":"sent"}</code> JSON shape.
 - Neither meaning proves end-device delivery or that a person read the message.
 - Timeouts are not retried automatically because the remote acceptance state
   may be uncertain.

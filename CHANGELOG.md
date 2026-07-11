@@ -30,6 +30,9 @@ Initial MVP.
 
 ### Fixed
 
+- Prevented disconnected or disabled Messages accounts from producing false
+  iMessage acceptance receipts by checking live account readiness before every
+  send and during `doctor`.
 - Kept every ingest failure on exit code 1 with empty stdout so Codex never
   interprets a usage error as a Stop continuation request.
 - Made the packaged CLI recognize canonicalized and symlinked entry paths.

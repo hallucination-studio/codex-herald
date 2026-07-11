@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, parse } from "node:path";
+import { performance } from "node:perf_hooks";
 import type {
   DeliveryOutcome,
   IMessageDestination,
@@ -12,17 +13,54 @@ import type {
 const INSPECTION_TIMEOUT_MS = 5_000;
 const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
 const MAX_VERSION_CHARS = 128;
+const OSASCRIPT_EXECUTABLE = "/usr/bin/osascript";
 const SAFE_CWD = parse(process.execPath).root;
+
+const IMESSAGE_READINESS_SCRIPT = `
+try
+  with timeout of 4 seconds
+    tell application id "com.apple.MobileSMS"
+      set imessageServices to services whose service type is iMessage
+      if (count imessageServices) is 0 then return "not_ready"
+      set targetService to item 1 of imessageServices
+      set serviceEnabled to enabled of targetService
+      set serviceConnected to (connection status of targetService is connected)
+      if serviceEnabled and serviceConnected then return "ready"
+    end tell
+  end timeout
+  return "not_ready"
+on error
+  return "check_failed"
+end try
+`;
+
+export type IMessageReadiness =
+  | { ok: true; code: "ready" }
+  | {
+      ok: false;
+      code: "imessage_check_failed" | "imessage_not_ready";
+    };
+
+type IMessageReadinessChecker = (
+  platform: NodeJS.Platform,
+  timeoutMs: number,
+) => Promise<IMessageReadiness>;
 
 export type IMessageInspection =
   | { ok: true; code: "ready"; version: string }
   | {
       ok: false;
-      code: "driver_failed" | "driver_invalid_response" | "driver_not_found";
+      code:
+        | "driver_failed"
+        | "driver_invalid_response"
+        | "driver_not_found"
+        | "imessage_check_failed"
+        | "imessage_not_ready";
     };
 
 export async function inspectIMessage(
   platform: NodeJS.Platform = process.platform,
+  checkReadiness: IMessageReadinessChecker = checkIMessageReadiness,
 ): Promise<IMessageInspection> {
   if (platform !== "darwin") {
     return { ok: false, code: "driver_not_found" };
@@ -33,7 +71,7 @@ export async function inspectIMessage(
     return { ok: false, code: "driver_not_found" };
   }
 
-  const result = await runImsg(executable, ["--version"], INSPECTION_TIMEOUT_MS);
+  const result = await runProcess(executable, ["--version"], INSPECTION_TIMEOUT_MS);
   if (result.kind === "not_found") {
     return { ok: false, code: "driver_not_found" };
   }
@@ -42,9 +80,42 @@ export async function inspectIMessage(
   }
 
   const version = firstLine(result.stdout);
-  return version
+  if (!version) {
+    return { ok: false, code: "driver_invalid_response" };
+  }
+
+  const readiness = await checkReadiness(platform, INSPECTION_TIMEOUT_MS);
+  return readiness.ok
     ? { ok: true, code: "ready", version }
-    : { ok: false, code: "driver_invalid_response" };
+    : { ok: false, code: readiness.code };
+}
+
+export async function checkIMessageReadiness(
+  platform: NodeJS.Platform = process.platform,
+  timeoutMs = INSPECTION_TIMEOUT_MS,
+  run: ProcessRunner = runProcess,
+): Promise<IMessageReadiness> {
+  if (platform !== "darwin") {
+    return { ok: false, code: "imessage_check_failed" };
+  }
+
+  const result = await run(
+    OSASCRIPT_EXECUTABLE,
+    ["-e", IMESSAGE_READINESS_SCRIPT],
+    timeoutMs,
+  );
+  if (result.kind !== "exited") {
+    return { ok: false, code: "imessage_check_failed" };
+  }
+
+  switch (firstLine(result.stdout)) {
+    case "ready":
+      return { ok: true, code: "ready" };
+    case "not_ready":
+      return { ok: false, code: "imessage_not_ready" };
+    default:
+      return { ok: false, code: "imessage_check_failed" };
+  }
 }
 
 export async function sendIMessage(
@@ -52,6 +123,7 @@ export async function sendIMessage(
   _event: LifecycleEvent,
   notification: Notification,
   platform: NodeJS.Platform = process.platform,
+  checkReadiness: IMessageReadinessChecker = checkIMessageReadiness,
 ): Promise<DeliveryOutcome> {
   if (platform !== "darwin") {
     return { status: "failed", code: "driver_not_found" };
@@ -62,7 +134,23 @@ export async function sendIMessage(
     return { status: "failed", code: "driver_not_found" };
   }
 
-  const result = await runImsg(
+  const startedAt = performance.now();
+  const readiness = await checkReadiness(
+    platform,
+    Math.min(INSPECTION_TIMEOUT_MS, destination.timeoutMs),
+  );
+  if (!readiness.ok) {
+    return { status: "failed", code: readiness.code };
+  }
+
+  const remainingTimeoutMs = Math.floor(
+    destination.timeoutMs - (performance.now() - startedAt),
+  );
+  if (remainingTimeoutMs <= 0) {
+    return { status: "failed", code: "driver_timeout" };
+  }
+
+  const result = await runProcess(
     executable,
     [
       "send",
@@ -74,7 +162,7 @@ export async function sendIMessage(
       "imessage",
       "--json",
     ],
-    destination.timeoutMs,
+    remainingTimeoutMs,
   );
 
   switch (result.kind) {
@@ -118,15 +206,21 @@ async function findImsg(searchPath = process.env.PATH): Promise<string | null> {
   return null;
 }
 
-type ImsgProcessResult =
+type ProcessResult =
   | { kind: "exited"; stdout: string }
   | { kind: "failed" | "not_found" | "terminated" | "timed_out"; stdout: "" };
 
-function runImsg(
+type ProcessRunner = (
   executable: string,
   args: readonly string[],
   timeoutMs: number,
-): Promise<ImsgProcessResult> {
+) => Promise<ProcessResult>;
+
+function runProcess(
+  executable: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<ProcessResult> {
   return new Promise((resolve) => {
     execFile(
       executable,

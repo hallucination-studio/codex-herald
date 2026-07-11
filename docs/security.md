@@ -56,6 +56,10 @@ behavior.
   added to receipts. The setup command and later `imsg --to` child process do
   receive it in argv, so shell history and same-user process inspection remain
   local-host considerations.
+- Before every iMessage send, Herald runs a fixed `/usr/bin/osascript` readiness
+  probe that reads only whether a Messages iMessage account is enabled and
+  connected. The probe receives no recipient, notification body, account alias,
+  chat, or transcript data and fails closed when its result is unavailable.
 - Receipt directories and files are private and contain only allowlisted
   metadata. Accepted receipt checks are best-effort; overlapping Hook processes
   may deliver a duplicate.
@@ -82,6 +86,7 @@ Herald never emits `decision: "block"`, `continue: false`, or exit code `2`.
 Destination delivery failure cannot alter whether Codex continues. Hook stdout
 is empty; only fatal adapter errors may write a stable code and redacted stderr
 diagnostic. The Stop hook budget is 60 seconds; legal fan-out is bounded below it.
+The iMessage readiness probe and send process share one destination deadline.
 
 ## Deferred security work
 

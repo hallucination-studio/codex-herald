@@ -88,13 +88,14 @@ describe("CLI commands", () => {
         homeDir: root,
         sendIMessage: async () => ({
           status: "failed",
-          code: "driver_failed",
+          code: "imessage_not_ready",
         }),
       }),
     );
 
     assert.equal(exitCode, 1);
     assert.doesNotMatch(output.stdout.join("\n"), new RegExp(recipient, "u"));
+    assert.match(output.stdout.join("\n"), /Messages > Settings > iMessage/u);
     assert.equal(output.stderr.length, 0);
     const config = parseConfigText(await readFile(configPath, "utf8"));
     assert.equal(config.destinations.phone?.transport, "imessage");
@@ -102,7 +103,7 @@ describe("CLI commands", () => {
     assert.doesNotMatch(receiptText, new RegExp(recipient, "u"));
     const [receipt] = await readReceipts(receiptPath);
     assert.equal(receipt?.status, "failed");
-    assert.equal(receipt?.code, "driver_failed");
+    assert.equal(receipt?.code, "imessage_not_ready");
   });
 
   it("setup rejects an empty iMessage recipient before creating a config", async () => {
@@ -189,6 +190,32 @@ describe("CLI commands", () => {
     const receipts = await readReceipts(receiptPath);
     assert.equal(receipts[0]?.status, "skipped");
     assert.equal(receipts[0]?.code, "not_configured");
+  });
+
+  it("ingest records iMessage readiness failure without disrupting Codex", async () => {
+    const fixture = await configuredFixture(singleIMessageConfig());
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["ingest", "--source", "codex-stop", "--config", fixture.configPath],
+      output.io,
+      runtime({
+        env: fixture.env,
+        homeDir: fixture.root,
+        stdin: chunks(JSON.stringify(validStopInput)),
+        sendIMessage: async () => ({
+          status: "failed",
+          code: "imessage_not_ready",
+        }),
+      }),
+    );
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(output.stdout, []);
+    assert.deepEqual(output.stderr, []);
+    const [receipt] = await readReceipts(fixture.receiptPath);
+    assert.equal(receipt?.status, "failed");
+    assert.equal(receipt?.code, "imessage_not_ready");
   });
 
   it("ingest reports malformed input without echoing it", async () => {
@@ -326,6 +353,42 @@ describe("CLI commands", () => {
       "literal_webhook_url_must_not_contain_secrets:ops",
     ]);
   });
+
+  it("doctor reports a disconnected iMessage account as not ready", async () => {
+    const fixture = await configuredFixture(singleIMessageConfig());
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["doctor", "--config", fixture.configPath, "--json"],
+      output.io,
+      runtime({
+        env: fixture.env,
+        homeDir: fixture.root,
+        inspectIMessage: async () => ({
+          ok: false,
+          code: "imessage_not_ready",
+        }),
+      }),
+    );
+
+    assert.equal(exitCode, 1);
+    assert.equal(output.stderr.length, 0);
+    const report = JSON.parse(output.stdout.join("\n")) as {
+      ok: boolean;
+      destinations: Array<{ id: string; status: string; code: string }>;
+      issues: string[];
+    };
+    assert.equal(report.ok, false);
+    assert.deepEqual(report.destinations, [
+      {
+        id: "phone",
+        transport: "imessage",
+        status: "error",
+        code: "imessage_not_ready",
+      },
+    ]);
+    assert.deepEqual(report.issues, ["destination_not_ready"]);
+  });
 });
 
 const validStopInput = {
@@ -451,6 +514,26 @@ recipient = "+8613800000000"
 [[routes]]
 events = ["turn.finished"]
 destinations = ["ops", "phone"]
+template = "compact"
+
+[privacy]
+include_prompt = false
+include_summary = true
+max_chars = 500
+`;
+}
+
+function singleIMessageConfig(): string {
+  return `version = 1
+
+[destinations.phone]
+transport = "imessage"
+driver = "imsg"
+recipient = "+8613800000000"
+
+[[routes]]
+events = ["turn.finished"]
+destinations = ["phone"]
 template = "compact"
 
 [privacy]

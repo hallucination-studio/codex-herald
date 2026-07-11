@@ -8,7 +8,12 @@ import type {
   LifecycleEvent,
   Notification,
 } from "../src/domain/types.js";
-import { inspectIMessage, sendIMessage } from "../src/transports/imessage.js";
+import {
+  checkIMessageReadiness,
+  type IMessageReadiness,
+  inspectIMessage,
+  sendIMessage,
+} from "../src/transports/imessage.js";
 
 const event: LifecycleEvent = {
   id: "evt_test",
@@ -26,6 +31,10 @@ const notification: Notification = {
   truncated: false,
 };
 
+async function readyIMessage(): Promise<IMessageReadiness> {
+  return { ok: true, code: "ready" };
+}
+
 function destination(
   overrides: Partial<IMessageDestination> = {},
 ): IMessageDestination {
@@ -40,6 +49,55 @@ function destination(
 }
 
 describe("sendIMessage", () => {
+  it("does not invoke imsg when the Messages account is not ready", async () => {
+    await withFakeImsg(async ({ directory, executable }) => {
+      const marker = join(directory, "send-invoked");
+      await installNodeExecutable(
+        executable,
+        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes");\n` +
+          'process.stdout.write(JSON.stringify({ status: "sent" }));',
+      );
+
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        async () => ({ ok: false, code: "imessage_not_ready" }),
+      );
+
+      assert.deepEqual(outcome, {
+        status: "failed",
+        code: "imessage_not_ready",
+      });
+      assert.equal(await pathExists(marker), false);
+    });
+  });
+
+  it("does not invoke imsg when the Messages account check fails", async () => {
+    await withFakeImsg(async ({ directory, executable }) => {
+      const marker = join(directory, "send-invoked");
+      await installNodeExecutable(
+        executable,
+        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes");`,
+      );
+
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        async () => ({ ok: false, code: "imessage_check_failed" }),
+      );
+
+      assert.deepEqual(outcome, {
+        status: "failed",
+        code: "imessage_check_failed",
+      });
+      assert.equal(await pathExists(marker), false);
+    });
+  });
+
   it("passes recipient and body as exact argv data without a shell", async () => {
     await withFakeImsg(async ({ directory, executable }) => {
       const capturePath = join(directory, "capture.json");
@@ -68,6 +126,7 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
           event,
           { ...notification, body },
           "darwin",
+          readyIMessage,
         );
 
         assert.deepEqual(outcome, {
@@ -101,7 +160,13 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
 
   it("maps an absent imsg on PATH to driver_not_found", async () => {
     await withFakeImsg(async () => {
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -135,7 +200,13 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
         'process.stderr.write("send failed"); process.exit(1);',
       );
 
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -148,7 +219,13 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(executable, 'process.kill(process.pid, "SIGTERM");');
 
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -174,6 +251,10 @@ setInterval(() => undefined, 1_000);
         event,
         notification,
         "darwin",
+        async (_platform, timeoutMs) => {
+          assert.equal(timeoutMs, 750);
+          return { ok: true, code: "ready" };
+        },
       );
 
       assert.deepEqual(outcome, {
@@ -188,7 +269,13 @@ setInterval(() => undefined, 1_000);
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(executable, 'process.stdout.write("sent");');
 
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -204,7 +291,13 @@ setInterval(() => undefined, 1_000);
         'process.stdout.write(JSON.stringify({ status: "queued" }));',
       );
 
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -223,7 +316,13 @@ process.stderr.write("y".repeat(${18 * 1024}));
 `,
       );
 
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
+      const outcome = await sendIMessage(
+        destination(),
+        event,
+        notification,
+        "darwin",
+        readyIMessage,
+      );
 
       assert.deepEqual(outcome, {
         status: "failed",
@@ -234,6 +333,20 @@ process.stderr.write("y".repeat(${18 * 1024}));
 });
 
 describe("inspectIMessage", () => {
+  it("reports a disconnected Messages account as not ready", async () => {
+    await withFakeImsg(async ({ executable }) => {
+      await installNodeExecutable(executable, 'process.stdout.write("0.12.3\\n");');
+
+      assert.deepEqual(
+        await inspectIMessage("darwin", async () => ({
+          ok: false,
+          code: "imessage_not_ready",
+        })),
+        { ok: false, code: "imessage_not_ready" },
+      );
+    });
+  });
+
   it("reports the version using only the basic version probe", async () => {
     await withFakeImsg(async ({ directory, executable }) => {
       const invocationPath = join(directory, "inspection-invocations.ndjson");
@@ -251,7 +364,7 @@ if (args.length === 1 && args[0] === "--version") {
 `,
       );
 
-      const inspection = await inspectIMessage("darwin");
+      const inspection = await inspectIMessage("darwin", readyIMessage);
 
       assert.deepEqual(inspection, {
         ok: true,
@@ -268,7 +381,7 @@ if (args.length === 1 && args[0] === "--version") {
 
   it("maps an absent executable to driver_not_found", async () => {
     await withFakeImsg(async () => {
-      assert.deepEqual(await inspectIMessage("darwin"), {
+      assert.deepEqual(await inspectIMessage("darwin", readyIMessage), {
         ok: false,
         code: "driver_not_found",
       });
@@ -279,7 +392,7 @@ if (args.length === 1 && args[0] === "--version") {
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(executable, "process.exit(1);");
 
-      assert.deepEqual(await inspectIMessage("darwin"), {
+      assert.deepEqual(await inspectIMessage("darwin", readyIMessage), {
         ok: false,
         code: "driver_failed",
       });
@@ -290,11 +403,56 @@ if (args.length === 1 && args[0] === "--version") {
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(executable, "process.stdout.write('');");
 
-      assert.deepEqual(await inspectIMessage("darwin"), {
+      assert.deepEqual(await inspectIMessage("darwin", readyIMessage), {
         ok: false,
         code: "driver_invalid_response",
       });
     });
+  });
+});
+
+describe("checkIMessageReadiness", () => {
+  it("uses a fixed AppleScript probe without recipient or message content", async () => {
+    const canaryRecipient = "private-recipient@example.com";
+    const canaryBody = "private notification body";
+
+    const result = await checkIMessageReadiness(
+      "darwin",
+      5_000,
+      async (executable, args, timeoutMs) => {
+        assert.equal(executable, "/usr/bin/osascript");
+        assert.equal(timeoutMs, 5_000);
+        assert.deepEqual(args.slice(0, 1), ["-e"]);
+        const script = args.join("\n");
+        assert.match(script, /services whose service type is iMessage/u);
+        assert.match(script, /item 1 of imessageServices/u);
+        assert.doesNotMatch(script, new RegExp(canaryRecipient, "u"));
+        assert.doesNotMatch(script, new RegExp(canaryBody, "u"));
+        return { kind: "exited", stdout: "ready\n" };
+      },
+    );
+
+    assert.deepEqual(result, { ok: true, code: "ready" });
+  });
+
+  it("fails closed when the AppleScript probe cannot establish readiness", async () => {
+    assert.deepEqual(
+      await checkIMessageReadiness("darwin", 5_000, async () => ({
+        kind: "exited",
+        stdout: "check_failed\n",
+      })),
+      { ok: false, code: "imessage_check_failed" },
+    );
+  });
+
+  it("reports a disabled or disconnected account as not ready", async () => {
+    assert.deepEqual(
+      await checkIMessageReadiness("darwin", 5_000, async () => ({
+        kind: "exited",
+        stdout: "not_ready\n",
+      })),
+      { ok: false, code: "imessage_not_ready" },
+    );
   });
 });
 

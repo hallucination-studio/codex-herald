@@ -329,9 +329,19 @@ async function testDestination(
     io.stdout(JSON.stringify(receipt));
   } else {
     io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
-    io.stdout(
-      "accepted means the local transport accepted the request; it is not proof of delivery.",
-    );
+    if (receipt.status === "accepted") {
+      io.stdout(
+        "accepted means the local transport accepted the request; it is not proof of delivery.",
+      );
+    } else if (receipt.code === "imessage_not_ready") {
+      io.stdout(
+        "Open Messages > Settings > iMessage, sign in and enable the account, then retry.",
+      );
+    } else if (receipt.code === "imessage_check_failed") {
+      io.stdout(
+        "Check that Messages is available and allow the app running Codex Herald to control it under System Settings > Privacy & Security > Automation, then retry.",
+      );
+    }
   }
   return receipt.status === "accepted" ? 0 : 1;
 }

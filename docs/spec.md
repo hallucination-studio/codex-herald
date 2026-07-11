@@ -23,7 +23,9 @@ end-device delivery.
 - I can run `setup`, `test <destination>`, and `doctor` without triggering a
   Codex turn.
 - I can explicitly pass an iMessage recipient to `setup`; Herald writes the
-  `phone` destination and immediately sends one check notification.
+  `phone` destination, verifies that Messages has an enabled and connected
+  iMessage account, and immediately sends one check notification only when the
+  account is ready.
 - I can inspect `accepted`, `failed`, and `skipped` receipts without exposing
   message bodies or secrets.
 
@@ -81,6 +83,13 @@ route, then reuses the same delivery path as `test phone`. Plain `setup` remains
 side-effect free beyond writing the empty starter config. `ingest` is a
 non-interactive hook adapter. It reads one JSON object from stdin, writes
 nothing to stdout, and never asks for input.
+
+iMessage readiness is enforced at the transport boundary for setup checks,
+explicit tests, doctor inspection, and Stop deliveries. Herald uses a fixed,
+read-only Messages AppleScript probe and checks the first iMessage service that
+the imsg v0.12.3 send path selects. Herald sends only when that service is
+enabled and connected. It does not read account aliases, chats, or message
+bodies.
 
 ## Project structure
 
@@ -207,8 +216,14 @@ exception stack.
 - Matching routes are expanded and destination names are deduplicated.
 - Destinations run concurrently and independently.
 - Webhook `accepted` means the Node HTTP(S) client received an HTTP 2xx response.
-- imsg `accepted` means `imsg` exited `0` with its expected JSON success shape.
+- imsg `accepted` means the Messages account readiness check passed and `imsg`
+  exited `0` with its expected JSON success shape.
+- An unavailable iMessage account produces `failed/imessage_not_ready` without
+  invoking `imsg send`. An unavailable or invalid readiness probe produces
+  `failed/imessage_check_failed`.
 - Neither status means the person or device received/read the notification.
+- Readiness does not prove recipient reachability and never triggers an
+  implicit fallback destination.
 - Timeouts are failures with uncertain remote state and are not retried
   automatically, preventing duplicate messages.
 - A missing route produces a `skipped/no_matching_route` receipt.
@@ -236,7 +251,8 @@ exception stack.
   those outputs would change Codex lifecycle behavior.
 - The packaged Stop command has a 60-second timeout, exceeding the bounded
   40-second transport fan-out budget (32 destinations, concurrency 8, 10 seconds
-  per adapter).
+  per adapter). iMessage readiness and send work share the same per-destination
+  10-second deadline.
 
 ## Observability questions
 

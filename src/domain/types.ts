@@ -80,6 +80,8 @@ export type FailedCode =
   | "driver_not_found"
   | "driver_terminated"
   | "driver_timeout"
+  | "imessage_check_failed"
+  | "imessage_not_ready"
   | "internal_error"
   | "secret_unavailable"
   | "webhook_http_error"
