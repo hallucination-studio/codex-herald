@@ -12,8 +12,7 @@ Before changing behavior, read:
 
 - the [MVP specification](docs/spec.md);
 - the [security model](docs/security.md); and
-- [ADR-001](docs/decisions/0001-local-first-plugin-and-cli.md); and
-- [ADR-002](docs/decisions/0002-cross-process-delivery-locks.md).
+- [ADR-001](docs/decisions/0001-local-first-plugin-and-cli.md).
 
 The public vocabulary and status semantics are part of the product contract.
 In particular, <code>accepted</code> is transport acceptance, never proof of
@@ -69,9 +68,7 @@ Run the built CLI directly:
 
 - Keep changes small and independently reviewable.
 - Preserve strict boundary validation for Hook JSON, TOML, secrets, processes,
-  DNS, HTTP, and persisted receipts.
-- Preserve the cross-process owner-token lock and reread accepted receipts only
-  after acquiring the event/destination lock.
+  HTTP, and persisted receipts.
 - Do not introduce a generic adapter SDK for an MVP-only use case.
 - Do not discover configuration relative to the current directory or git root.
 - Do not parse <code>transcript_path</code>.
@@ -89,7 +86,7 @@ Tests must be deterministic and local:
 
 - use a fake executable for imsg;
 - use loopback HTTP servers for webhook tests;
-- inject environment, Keychain, process, DNS, clock, and filesystem boundaries;
+- inject environment, Keychain, process, clock, and filesystem boundaries;
 - never send a real message from the automated suite; and
 - never place live recipients, URLs with credentials, tokens, prompts, or
   notification bodies in fixtures or snapshots.

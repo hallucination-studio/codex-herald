@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readLimitedText } from "../src/cli/input.js";
 import {
   MAX_CODEX_STOP_INPUT_BYTES,
   normalizeCodexStop,
@@ -11,13 +12,8 @@ import type { CodexStopInput, LifecycleEvent } from "../src/domain/types.js";
 
 const validStopInput: CodexStopInput = {
   session_id: "session-123",
-  transcript_path: "/path/that/must/not/be/read.jsonl",
-  cwd: "/tmp/project",
   hook_event_name: "Stop",
-  model: "gpt-5",
-  permission_mode: "default",
   turn_id: "turn-456",
-  stop_hook_active: false,
   last_assistant_message: "Implemented the requested change.",
 };
 
@@ -30,10 +26,50 @@ function expectHeraldError(action: () => unknown, code: HeraldError["code"]): vo
 }
 
 describe("Codex Stop normalization", () => {
+  it("stops consuming streamed input as soon as the byte limit is exceeded", async () => {
+    let consumed = 0;
+    async function* chunks(): AsyncGenerator<string> {
+      for (const chunk of ["ab", "cd", "must-not-be-read"]) {
+        consumed += 1;
+        yield chunk;
+      }
+    }
+
+    await assert.rejects(readLimitedText(chunks(), 3), (error: unknown) => {
+      assert.ok(error instanceof HeraldError);
+      assert.equal(error.code, "HOOK_INPUT_TOO_LARGE");
+      return true;
+    });
+    assert.equal(consumed, 2);
+  });
+
+  it("accepts only the Stop fields Herald consumes", () => {
+    const parsed = parseCodexStopText(
+      JSON.stringify({
+        session_id: "session-123",
+        turn_id: "turn-456",
+        hook_event_name: "Stop",
+        last_assistant_message: "Implemented the requested change.",
+      }),
+    );
+
+    assert.deepEqual(parsed, {
+      session_id: "session-123",
+      turn_id: "turn-456",
+      hook_event_name: "Stop",
+      last_assistant_message: "Implemented the requested change.",
+    });
+  });
+
   it("accepts the Stop allowlist and strips unknown fields", () => {
     const parsed = parseCodexStopText(
       JSON.stringify({
         ...validStopInput,
+        transcript_path: "/path/that/must/not/be/read.jsonl",
+        cwd: "/tmp/project",
+        model: "gpt-5",
+        permission_mode: "default",
+        stop_hook_active: false,
         prompt: "must not enter the typed core",
         future_codex_field: { nested: true },
       }),
@@ -90,7 +126,7 @@ describe("Codex Stop normalization", () => {
       new Date("2026-07-11T00:00:00.000Z"),
     );
     const repeated = normalizeCodexStop(
-      { ...validStopInput, transcript_path: "/different/unread/path" },
+      validStopInput,
       new Date("2026-07-11T00:01:00.000Z"),
     );
     const changedMessage = normalizeCodexStop(

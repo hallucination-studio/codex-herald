@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
-import { chmod, link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { HeraldError } from "../domain/errors.js";
 
@@ -42,41 +41,23 @@ export async function setupConfig(
   const directory = dirname(path);
   await ensureSafeDirectory(directory);
 
+  if (!options.force) {
+    await createExclusive(path);
+    return "created";
+  }
+
   const existing = await existingStats(path);
   if (existing) {
     assertReplaceable(path, existing);
-    if (!options.force) {
-      throw new HeraldError("SETUP_EXISTS", `Configuration already exists: ${path}`);
-    }
   }
-
   const temporaryPath = join(
     directory,
     `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
   );
-  let handle: FileHandle | undefined;
   try {
-    handle = await open(
-      temporaryPath,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_FOLLOW,
-      FILE_MODE,
-    );
-    await handle.writeFile(DEFAULT_CONFIG, "utf8");
-    await handle.sync();
-    await handle.chmod(FILE_MODE);
-    await handle.close();
-    handle = undefined;
-
-    if (options.force) {
-      await replacePath(temporaryPath, path);
-    } else {
-      await installExclusive(temporaryPath, path);
-    }
-    await chmod(path, FILE_MODE);
+    await writeConfigFile(temporaryPath);
+    await replacePath(temporaryPath, path);
   } catch (error) {
-    if (handle) {
-      await handle.close();
-    }
     await unlinkIfPresent(temporaryPath);
     throw error;
   }
@@ -84,19 +65,34 @@ export async function setupConfig(
   return existing ? "replaced" : "created";
 }
 
-async function installExclusive(temporaryPath: string, path: string): Promise<void> {
+async function createExclusive(path: string): Promise<void> {
   try {
-    await link(temporaryPath, path);
+    await writeConfigFile(path);
   } catch (error) {
-    const exists =
-      isErrno(error, "EEXIST") ||
-      (isErrno(error, "EPERM") && (await existingStats(path)) !== undefined);
-    if (exists) {
+    if (isErrno(error, "EEXIST")) {
+      const existing = await existingStats(path);
+      if (existing) {
+        assertReplaceable(path, existing);
+      }
       throw new HeraldError("SETUP_EXISTS", `Configuration already exists: ${path}`);
     }
     throw error;
   }
-  await unlink(temporaryPath);
+}
+
+async function writeConfigFile(path: string): Promise<void> {
+  const handle = await open(
+    path,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_FOLLOW,
+    FILE_MODE,
+  );
+  try {
+    await handle.writeFile(DEFAULT_CONFIG, "utf8");
+    await handle.sync();
+    await handle.chmod(FILE_MODE);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function replacePath(temporaryPath: string, path: string): Promise<void> {

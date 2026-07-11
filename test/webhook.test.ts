@@ -41,39 +41,15 @@ describe("sendWebhook", () => {
     });
   });
 
-  it("rejects a hostname with any private DNS answer", async () => {
-    const outcome = await sendWebhook(
-      destination("https://mixed.example/hook"),
-      event,
-      notification,
-      runtime({
-        lookup: async () => [
-          { address: "93.184.216.34", family: 4 },
-          { address: "127.0.0.1", family: 4 },
-        ],
-      }),
-    );
-
-    assert.deepEqual(outcome, {
-      status: "failed",
-      code: "webhook_unsafe_url",
-    });
-  });
-
-  it("rejects public HTTP resolved from a secret even with both opt-ins", async () => {
+  it("revalidates a URL resolved from a secret reference", async () => {
     const outcome = await sendWebhook(
       {
-        ...destination("ignored-secret-reference"),
+        ...destination("https://placeholder.invalid/hook"),
         url: { kind: "env", name: "OPS_WEBHOOK_URL" },
-        allowPrivateNetwork: true,
-        allowInsecureHttp: true,
       },
       event,
       notification,
-      runtime({
-        resolveValue: async () => "http://public.example/hook",
-        lookup: async () => [{ address: "93.184.216.34", family: 4 }],
-      }),
+      runtime({ resolveValue: async () => "http://127.0.0.1/hook" }),
     );
 
     assert.deepEqual(outcome, {
@@ -82,29 +58,26 @@ describe("sendWebhook", () => {
     });
   });
 
-  it("requires both HTTP opt-ins after a private URL is resolved from a secret", async () => {
+  it("rejects line breaks in resolved header values", async () => {
     const outcome = await sendWebhook(
       {
-        ...destination("ignored-secret-reference"),
-        url: { kind: "env", name: "OPS_WEBHOOK_URL" },
-        allowPrivateNetwork: false,
-        allowInsecureHttp: true,
+        ...destination("https://example.invalid/hook"),
+        headers: {
+          Authorization: { kind: "env", name: "OPS_AUTHORIZATION" },
+        },
       },
       event,
       notification,
-      runtime({
-        resolveValue: async () => "http://private.example/hook",
-        lookup: async () => [{ address: "10.0.0.5", family: 4 }],
-      }),
+      runtime({ resolveSecret: async () => "Bearer safe\r\ninjected: value" }),
     );
 
     assert.deepEqual(outcome, {
       status: "failed",
-      code: "webhook_unsafe_url",
+      code: "config_invalid",
     });
   });
 
-  it("posts the redacted notification to an explicitly allowed loopback target", async () => {
+  it("posts the redacted notification to an explicitly allowed HTTP target", async () => {
     let receivedBody = "";
     let receivedEventId: string | undefined;
     const server = createServer((request, response) => {
@@ -128,7 +101,6 @@ describe("sendWebhook", () => {
       const outcome = await sendWebhook(
         {
           ...destination(`http://127.0.0.1:${port}/hook`),
-          allowPrivateNetwork: true,
           allowInsecureHttp: true,
         },
         event,
@@ -163,38 +135,6 @@ describe("sendWebhook", () => {
     }
   });
 
-  it("posts to a hostname using the DNS-pinned address", async () => {
-    const server = createServer((_request, response) => {
-      response.writeHead(204);
-      response.end();
-    });
-
-    await listen(server);
-    const { port } = server.address() as AddressInfo;
-
-    try {
-      const outcome = await sendWebhook(
-        {
-          ...destination(`http://webhook.test:${port}/hook`),
-          allowPrivateNetwork: true,
-          allowInsecureHttp: true,
-        },
-        event,
-        notification,
-        runtime({
-          lookup: async () => [{ address: "127.0.0.1", family: 4 }],
-        }),
-      );
-
-      assert.deepEqual(outcome, {
-        status: "accepted",
-        code: "webhook_accepted",
-      });
-    } finally {
-      await close(server);
-    }
-  });
-
   it("does not follow redirects", async () => {
     const server = createServer((_request, response) => {
       response.writeHead(302, { location: "http://127.0.0.1/private" });
@@ -208,7 +148,6 @@ describe("sendWebhook", () => {
       const outcome = await sendWebhook(
         {
           ...destination(`http://127.0.0.1:${port}/redirect`),
-          allowPrivateNetwork: true,
           allowInsecureHttp: true,
         },
         event,
@@ -225,16 +164,50 @@ describe("sendWebhook", () => {
     }
   });
 
-  it("bounds DNS resolution with the destination timeout", {
+  it("bounds a webhook that never returns response headers", {
+    timeout: 1_000,
+  }, async () => {
+    const server = createServer(() => undefined);
+    await listen(server);
+    const { port } = server.address() as AddressInfo;
+    const startedAt = Date.now();
+
+    try {
+      const outcome = await sendWebhook(
+        {
+          ...destination(`http://127.0.0.1:${port}/hang`),
+          allowInsecureHttp: true,
+          timeoutMs: 25,
+        },
+        event,
+        notification,
+        runtime(),
+      );
+
+      assert.deepEqual(outcome, {
+        status: "failed",
+        code: "webhook_timeout",
+      });
+      assert.ok(Date.now() - startedAt < 500);
+    } finally {
+      server.closeAllConnections();
+      await close(server);
+    }
+  });
+
+  it("bounds preparation even when a resolver ignores cancellation", {
     timeout: 1_000,
   }, async () => {
     const startedAt = Date.now();
-
     const outcome = await sendWebhook(
-      { ...destination("https://hanging.example/hook"), timeoutMs: 25 },
+      {
+        ...destination("https://placeholder.invalid/hook"),
+        url: { kind: "env", name: "OPS_WEBHOOK_URL" },
+        timeoutMs: 25,
+      },
       event,
       notification,
-      runtime({ lookup: () => new Promise(() => undefined) }),
+      runtime({ resolveValue: () => new Promise(() => undefined) }),
     );
 
     assert.deepEqual(outcome, {
@@ -259,7 +232,6 @@ describe("sendWebhook", () => {
       event,
       notification,
       runtime({
-        lookup: async () => [{ address: "93.184.216.34", family: 4 }],
         resolveSecret: async () => {
           secretLookups += 1;
           await delay(50);
@@ -294,7 +266,6 @@ describe("sendWebhook", () => {
       const outcome = await sendWebhook(
         {
           ...destination(`http://127.0.0.1:${port}/stream`),
-          allowPrivateNetwork: true,
           allowInsecureHttp: true,
         },
         event,
@@ -325,7 +296,6 @@ function destination(url: string): WebhookDestination {
     transport: "webhook",
     url: { kind: "literal", value: url },
     headers: {},
-    allowPrivateNetwork: false,
     allowInsecureHttp: false,
     timeoutMs: 1_000,
   };

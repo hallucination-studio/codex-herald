@@ -34,8 +34,8 @@ continue the turn." Another matching Stop hook may request continuation, so a
 later Stop fact may occur for the same Codex turn.
 
 Herald derives a stable event id from the Codex session id, turn id, hook name,
-and a hash of the last assistant message. Repeated identical events are skipped
-per destination after an accepted receipt.
+and a hash of the last assistant message. Before sending, Herald makes a
+best-effort check for an accepted receipt for the same event and destination.
 
 ## Tech stack
 
@@ -43,9 +43,7 @@ per destination after an accepted receipt.
 - TypeScript with strict type checking
 - `smol-toml` for TOML parsing
 - Zod for boundary validation and discriminated destination types
-- `ipaddr.js` for public/private IP classification at the webhook boundary
-- Node built-ins for CLI parsing, HTTP(S), DNS, process spawning, hashing, and
-  tests
+- Node built-ins for CLI parsing, HTTP(S), process spawning, hashing, and tests
 - Biome for linting and formatting
 - A single-file Node bundle for the plugin hook executable so it does not rely
   on a globally installed CLI or undeclared runtime state
@@ -120,7 +118,6 @@ recipient = "+8613800000000"
 [destinations.ops]
 transport = "webhook"
 url = "$OPS_WEBHOOK_URL"
-# allow_private_network = false
 # allow_insecure_http = false
 
 [[routes]]
@@ -154,9 +151,8 @@ max_chars = 500
 - Keychain references use `keychain://<service>/<account>` and are resolved via
   macOS `/usr/bin/security` without a shell.
 - Resolved secrets are never included in output, receipts, or error messages.
-- Webhook URLs must be HTTPS. Private/loopback destinations require
-  `allow_private_network = true`; plain HTTP additionally requires
-  `allow_insecure_http = true`. Userinfo in a literal URL is rejected.
+- Webhook URLs must use HTTPS unless `allow_insecure_http = true`. Userinfo in
+  a literal URL is rejected.
 - Webhook header values, when configured, must be environment or Keychain
   references.
 - iMessage requires `driver = "imsg"`. Herald forces
@@ -205,8 +201,7 @@ exception stack.
 
 - Matching routes are expanded and destination names are deduplicated.
 - Destinations run concurrently and independently.
-- Webhook `accepted` means an HTTP 2xx response was received by the DNS-pinned
-  Node HTTP(S) client.
+- Webhook `accepted` means the Node HTTP(S) client received an HTTP 2xx response.
 - imsg `accepted` means `imsg` exited `0` with its expected JSON success shape.
 - Neither status means the person or device received/read the notification.
 - Timeouts are failures with uncertain remote state and are not retried
@@ -216,8 +211,8 @@ exception stack.
   does not disrupt the Codex turn.
 - A previously accepted event/destination pair produces a
   `skipped/duplicate_event` receipt.
-- Duplicate checks and sends are serialized per event/destination across OS
-  processes. Accepted receipts are reread from disk after lock acquisition.
+- Accepted receipt checks are best-effort. Overlapping Hook processes may race
+  and deliver a duplicate; MVP does not claim exactly-once delivery.
 - Receipt persistence uses private directories/files and bounded NDJSON
   rotation. It is best-effort for individual destination failures but a hook
   input parse failure remains a fatal adapter error.
@@ -225,7 +220,8 @@ exception stack.
 ### Stop hook process contract
 
 - stdin is capped and parsed as the documented Codex Stop object.
-- Unknown input fields are ignored; required fields are validated.
+- Herald requires only `session_id`, `turn_id`, `hook_event_name = "Stop"`, and
+  `last_assistant_message`. Unknown and unrelated Codex fields are ignored.
 - stdout is always empty.
 - Exit `0` after routing completes, even when one or more destinations fail;
   those failures are represented by receipts.
@@ -328,4 +324,3 @@ replaced with localhost servers or executable fakes; no real messages are sent.
 - Rich templates and per-route privacy overrides
 - Receipt querying/retention commands
 - Managed enterprise hook deployment
-- Other agent sources such as Claude or Gemini

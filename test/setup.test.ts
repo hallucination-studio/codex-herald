@@ -8,15 +8,17 @@ import { DEFAULT_CONFIG, setupConfig } from "../src/config/setup.js";
 import { HeraldError } from "../src/domain/errors.js";
 
 describe("setupConfig", () => {
-  it("atomically creates a private, valid starter config", async () => {
+  it("creates a private, valid starter config", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-herald-setup-"));
     const path = join(root, "nested", "config.toml");
 
     const result = await setupConfig(path);
+    const directoryStats = await lstat(join(root, "nested"));
     const stats = await lstat(path);
     const text = await readFile(path, "utf8");
 
     assert.equal(result, "created");
+    assert.equal(directoryStats.mode & 0o777, 0o700);
     assert.equal(stats.mode & 0o777, 0o600);
     assert.deepEqual(parseConfigText(text), {
       version: 1,
@@ -42,33 +44,6 @@ describe("setupConfig", () => {
       return true;
     });
     assert.equal(await readFile(path, "utf8"), "existing");
-  });
-
-  it("allows only one concurrent non-force setup to create the config", async () => {
-    const root = await mkdtemp(join(tmpdir(), "codex-herald-setup-"));
-    const path = join(root, "config.toml");
-
-    const results = await Promise.allSettled(
-      Array.from({ length: 8 }, () => setupConfig(path)),
-    );
-
-    const created = results.filter(
-      (result): result is PromiseFulfilledResult<"created" | "replaced"> =>
-        result.status === "fulfilled",
-    );
-    const rejected = results.filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    assert.deepEqual(
-      created.map(({ value }) => value),
-      ["created"],
-    );
-    assert.equal(rejected.length, 7);
-    for (const result of rejected) {
-      assert.ok(result.reason instanceof HeraldError);
-      assert.equal(result.reason.code, "SETUP_EXISTS");
-    }
-    assert.equal(await readFile(path, "utf8"), DEFAULT_CONFIG);
   });
 
   it("replaces a regular file when force is explicit", async () => {

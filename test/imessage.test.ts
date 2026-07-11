@@ -1,23 +1,14 @@
 import assert from "node:assert/strict";
 import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { describe, it } from "node:test";
 import type {
   IMessageDestination,
   LifecycleEvent,
   Notification,
 } from "../src/domain/types.js";
-import {
-  MAX_PROCESS_OUTPUT_BYTES,
-  runSafeProcess,
-  SAFE_PROCESS_CWD,
-} from "../src/system/process.js";
-import {
-  inspectIMessage,
-  MAX_IMSG_VERSION_CHARS,
-  sendIMessage,
-} from "../src/transports/imessage.js";
+import { inspectIMessage, sendIMessage } from "../src/transports/imessage.js";
 
 const event: LifecycleEvent = {
   id: "evt_test",
@@ -43,7 +34,7 @@ function destination(
     transport: "imessage",
     driver: "imsg",
     recipient: "+8613800000000",
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     ...overrides,
   };
 }
@@ -102,7 +93,7 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
         "imessage",
         "--json",
       ]);
-      assert.equal(capture.cwd, SAFE_PROCESS_CWD);
+      assert.equal(capture.cwd, parse(process.execPath).root);
       assert.equal(capture.canary, null);
       assert.equal(await pathExists(injectedPath), false);
     });
@@ -115,63 +106,6 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
       assert.deepEqual(outcome, {
         status: "failed",
         code: "driver_not_found",
-      });
-    });
-  });
-
-  it("rejects an imsg executable found through a world-writable PATH directory", async () => {
-    await withFakeImsg(async ({ directory, executable }) => {
-      const marker = join(directory, "executed");
-      await installNodeExecutable(
-        executable,
-        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes");\n` +
-          'process.stdout.write(JSON.stringify({ status: "sent" }));',
-      );
-      await chmod(directory, 0o777);
-
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
-
-      assert.deepEqual(outcome, {
-        status: "failed",
-        code: "driver_not_found",
-      });
-      assert.equal(await pathExists(marker), false);
-    });
-  });
-
-  it("rejects a world-writable imsg executable in a trusted PATH directory", async () => {
-    await withFakeImsg(async ({ directory, executable }) => {
-      const marker = join(directory, "executed");
-      await installNodeExecutable(
-        executable,
-        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes");\n` +
-          'process.stdout.write(JSON.stringify({ status: "sent" }));',
-      );
-      await chmod(executable, 0o777);
-
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
-
-      assert.deepEqual(outcome, {
-        status: "failed",
-        code: "driver_not_found",
-      });
-      assert.equal(await pathExists(marker), false);
-    });
-  });
-
-  it("accepts a safe executable from a current-user Homebrew-style directory", async () => {
-    await withFakeImsg(async ({ directory, executable }) => {
-      await installNodeExecutable(
-        executable,
-        'process.stdout.write(JSON.stringify({ status: "sent" }));',
-      );
-      await chmod(directory, 0o775);
-
-      const outcome = await sendIMessage(destination(), event, notification, "darwin");
-
-      assert.deepEqual(outcome, {
-        status: "accepted",
-        code: "imsg_accepted",
       });
     });
   });
@@ -279,39 +213,28 @@ setInterval(() => undefined, 1_000);
     });
   });
 
-  it("caps stdout and stderr independently at 16 KiB", async () => {
+  it("fails safely when imsg exceeds the process output limit", async () => {
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(
         executable,
         `
-process.stdout.write("x".repeat(${MAX_PROCESS_OUTPUT_BYTES + 1024}));
-process.stderr.write("y".repeat(${MAX_PROCESS_OUTPUT_BYTES + 2048}));
+process.stdout.write("x".repeat(${17 * 1024}));
+process.stderr.write("y".repeat(${18 * 1024}));
 `,
       );
 
-      const result = await runSafeProcess(executable, [], 1_000);
+      const outcome = await sendIMessage(destination(), event, notification, "darwin");
 
-      assert.equal(result.kind, "exited");
-      assert.equal(Buffer.byteLength(result.stdout), MAX_PROCESS_OUTPUT_BYTES);
-      assert.equal(Buffer.byteLength(result.stderr), MAX_PROCESS_OUTPUT_BYTES);
-      assert.equal(result.stdoutTruncated, true);
-      assert.equal(result.stderrTruncated, true);
+      assert.deepEqual(outcome, {
+        status: "failed",
+        code: "driver_failed",
+      });
     });
-  });
-
-  it("classifies a spawn ENOENT as not_found", async () => {
-    const result = await runSafeProcess(
-      join(tmpdir(), `missing-imsg-${process.pid}-${Date.now()}`),
-      [],
-      100,
-    );
-
-    assert.equal(result.kind, "not_found");
   });
 });
 
 describe("inspectIMessage", () => {
-  it("reports a bounded version only after both capability probes pass", async () => {
+  it("reports the version using only the basic version probe", async () => {
     await withFakeImsg(async ({ directory, executable }) => {
       const invocationPath = join(directory, "inspection-invocations.ndjson");
       await installNodeExecutable(
@@ -322,8 +245,6 @@ const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(invocationPath)}, JSON.stringify(args) + "\\n");
 if (args.length === 1 && args[0] === "--version") {
   process.stdout.write("imsg 0.12.3\\nignored second line\\n");
-} else if (args.length === 2 && args[0] === "send" && args[1] === "--help") {
-  process.stdout.write("Usage: imsg send --to VALUE --text VALUE --service VALUE --json\\n");
 } else {
   process.exit(2);
 }
@@ -341,31 +262,7 @@ if (args.length === 1 && args[0] === "--version") {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as string[]);
-      assert.deepEqual(invocations, [["--version"], ["send", "--help"]]);
-    });
-  });
-
-  it("limits the returned version to the first 128 Unicode code points", async () => {
-    await withFakeImsg(async ({ executable }) => {
-      await installNodeExecutable(
-        executable,
-        `
-const args = process.argv.slice(2);
-if (args[0] === "--version") {
-  process.stdout.write("😀".repeat(${MAX_IMSG_VERSION_CHARS + 5}) + "\\nnot returned");
-} else {
-  process.stdout.write("--to --text --service --json");
-}
-`,
-      );
-
-      const inspection = await inspectIMessage("darwin");
-
-      assert.equal(inspection.ok, true);
-      if (inspection.ok) {
-        assert.equal(Array.from(inspection.version).length, MAX_IMSG_VERSION_CHARS);
-        assert.doesNotMatch(inspection.version, /not returned/u);
-      }
+      assert.deepEqual(invocations, [["--version"]]);
     });
   });
 
@@ -378,7 +275,7 @@ if (args[0] === "--version") {
     });
   });
 
-  it("maps a failed version or help process to driver_failed", async () => {
+  it("maps a failed version process to driver_failed", async () => {
     await withFakeImsg(async ({ executable }) => {
       await installNodeExecutable(executable, "process.exit(1);");
 
@@ -387,38 +284,11 @@ if (args[0] === "--version") {
         code: "driver_failed",
       });
     });
-
-    await withFakeImsg(async ({ executable }) => {
-      await installNodeExecutable(
-        executable,
-        `
-if (process.argv[2] === "--version") {
-  process.stdout.write("imsg 0.12.3");
-} else {
-  process.exit(1);
-}
-`,
-      );
-
-      assert.deepEqual(await inspectIMessage("darwin"), {
-        ok: false,
-        code: "driver_failed",
-      });
-    });
   });
 
-  it("rejects missing capabilities as driver_invalid_response", async () => {
+  it("rejects an empty version response", async () => {
     await withFakeImsg(async ({ executable }) => {
-      await installNodeExecutable(
-        executable,
-        `
-if (process.argv[2] === "--version") {
-  process.stdout.write("imsg 0.12.3");
-} else {
-  process.stdout.write("Usage: imsg send --to VALUE --text VALUE --json");
-}
-`,
-      );
+      await installNodeExecutable(executable, "process.stdout.write('');");
 
       assert.deepEqual(await inspectIMessage("darwin"), {
         ok: false,

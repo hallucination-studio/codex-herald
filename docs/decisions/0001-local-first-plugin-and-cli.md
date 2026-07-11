@@ -80,5 +80,3 @@ working directory are never searched for Herald config.
   not proof that no hook continued the turn.
 - User-level config is slightly less convenient than repo-local config but
   blocks a high-impact exfiltration path.
-- Adding other agent sources later remains possible behind new ingress
-  normalizers without changing destination/transport contracts.

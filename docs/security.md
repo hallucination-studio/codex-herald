@@ -14,32 +14,27 @@ behavior.
 
 | Threat | Abuse case | MVP control |
 | --- | --- | --- |
-| Spoofing | A non-Codex caller sends arbitrary hook JSON | Validate source name and full Stop shape; treat input as untrusted |
+| Spoofing | A non-Codex caller sends arbitrary hook JSON | Validate the consumed Stop fields; treat input as untrusted |
 | Tampering | Config references missing/changed destinations | Strict schema plus cross-reference validation |
 | Repudiation | A send fails with no usable record | Stable redacted receipts with event id and bounded code |
 | Information disclosure | A malicious repo adds an attacker webhook | Never discover config from cwd/git/project files |
 | Information disclosure | Secrets leak through logs or receipts | Field allowlist; never persist bodies, URLs, headers, recipients, or raw errors |
 | Denial of service | Huge stdin, hanging webhook, or hanging imsg | Input cap, adapter timeouts, parallel bounded fan-out, receipt rotation |
-| Elevation/injection | Recipient or path becomes a shell command | `spawn` with argument arrays and `shell: false`; no `eval` or command strings |
-| Tampering | Two Hook processes deliver the same event concurrently | Per-event/destination owner-token lock plus a fresh durable receipt check |
+| Elevation/injection | Recipient or path becomes a shell command | `execFile` with argument arrays and `shell: false`; no `eval` or command strings |
 
 ## Webhook policy
 
-- HTTPS is required for remote hosts.
-- Private/loopback targets require `allow_private_network = true`; plain HTTP
-  additionally requires `allow_insecure_http = true`.
+- HTTPS is required unless `allow_insecure_http = true` is explicitly set.
 - URL userinfo is rejected.
 - Redirects are disabled to prevent an allowed URL from redirecting to a less
   trusted target.
-- All A/AAAA records are classified before connection. Any non-public address
-  fails unless private networking was explicitly enabled, and the request
-  lookup is pinned to a validated address to close the DNS-rebinding gap.
-- URL, DNS, header-secret preparation, and the HTTP request share one deadline.
+- URL and header-secret preparation plus the HTTP request share one deadline.
   Timeout cancellation stops Keychain work and prevents later header lookups.
 - Response bodies are never consumed or included in receipts; the connection is
   closed after the HTTP status is classified.
-- Generic webhooks are intentionally user-configured, so there is no global
-  host allowlist. Project-local config is prohibited instead.
+- Destination hosts are trusted user configuration. MVP has no global host
+  allowlist and does not classify or pin DNS answers; project-local config is
+  prohibited instead.
 
 ## Secret policy
 
@@ -56,12 +51,12 @@ behavior.
 
 - Config files must be regular, owned by the current user, and inaccessible to
   group and other users. Setup creates them as `0600` in a `0700` directory.
-- Receipt files and their owner-token lock directories are private. Lock cleanup
-  removes only a dead process's unique owner record before removing an empty
-  directory, avoiding stale-lock ABA deletion of a new owner.
-- iMessage is disabled outside macOS. On macOS, Herald resolves `imsg` to an
-  absolute path, rejects world-writable PATH directories and writable executable
-  targets, and runs it without a shell or inherited secret environment.
+- Receipt directories and files are private and contain only allowlisted
+  metadata. Accepted receipt checks are best-effort; overlapping Hook processes
+  may deliver a duplicate.
+- iMessage is disabled outside macOS. On macOS, the user PATH is an explicit
+  trust boundary. Herald resolves `imsg` to an absolute path and runs fixed argv
+  without a shell or inherited secret environment.
 
 ## Privacy policy
 

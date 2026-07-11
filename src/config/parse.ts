@@ -1,4 +1,3 @@
-import ipaddr from "ipaddr.js";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import { HeraldError } from "../domain/errors.js";
@@ -21,7 +20,6 @@ const webhookSchema = z.strictObject({
   transport: z.literal("webhook"),
   url: z.string().min(1),
   headers: z.record(z.string().min(1), z.string()).optional().default({}),
-  allow_private_network: z.boolean().optional().default(false),
   allow_insecure_http: z.boolean().optional().default(false),
 });
 
@@ -133,10 +131,6 @@ function buildWebhookDestination(
   id: string,
   raw: z.output<typeof webhookSchema>,
 ): WebhookDestination {
-  if (raw.allow_insecure_http && !raw.allow_private_network) {
-    throw invalidConfig("allow_insecure_http requires allow_private_network = true");
-  }
-
   const headerEntries: Array<[string, SecretReference]> = [];
   const rawHeaderEntries = Object.entries(raw.headers);
   if (rawHeaderEntries.length > MAX_WEBHOOK_HEADERS) {
@@ -153,18 +147,13 @@ function buildWebhookDestination(
   }
   const headers = Object.fromEntries(headerEntries);
 
-  const url = parseResolvableUrl(
-    raw.url,
-    raw.allow_private_network,
-    raw.allow_insecure_http,
-  );
+  const url = parseResolvableUrl(raw.url, raw.allow_insecure_http);
 
   return {
     id,
     transport: "webhook",
     url,
     headers,
-    allowPrivateNetwork: raw.allow_private_network,
     allowInsecureHttp: raw.allow_insecure_http,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
@@ -172,7 +161,6 @@ function buildWebhookDestination(
 
 function parseResolvableUrl(
   value: string,
-  allowPrivateNetwork: boolean,
   allowInsecureHttp: boolean,
 ): ResolvableValue {
   const reference = parseSecretReference(value);
@@ -191,15 +179,7 @@ function parseResolvableUrl(
     throw invalidConfig("Webhook URL must not contain userinfo");
   }
 
-  const isPrivate = isKnownPrivateHost(url.hostname);
-  if (isPrivate && !allowPrivateNetwork) {
-    throw invalidConfig("Private webhook URLs require allow_private_network = true");
-  }
-
   if (url.protocol === "http:") {
-    if (!isPrivate) {
-      throw invalidConfig("Remote webhook URLs must use HTTPS");
-    }
     if (!allowInsecureHttp) {
       throw invalidConfig("Plain HTTP webhooks require allow_insecure_http = true");
     }
@@ -226,19 +206,6 @@ function parseSecretReference(value: string): SecretReference | undefined {
   }
 
   return undefined;
-}
-
-function isKnownPrivateHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local")
-  ) {
-    return true;
-  }
-
-  return ipaddr.isValid(normalized) && ipaddr.parse(normalized).range() !== "unicast";
 }
 
 function containsPrototypeKey(value: unknown): boolean {

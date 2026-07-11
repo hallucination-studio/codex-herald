@@ -1,19 +1,18 @@
+import { execFile } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
+import { delimiter, isAbsolute, join, parse } from "node:path";
 import type {
   DeliveryOutcome,
   IMessageDestination,
   LifecycleEvent,
   Notification,
 } from "../domain/types.js";
-import {
-  findExecutableOnPath,
-  runSafeProcess,
-  type SafeProcessResult,
-} from "../system/process.js";
-
-export const MAX_IMSG_VERSION_CHARS = 128;
 
 const INSPECTION_TIMEOUT_MS = 5_000;
-const REQUIRED_SEND_FLAGS = ["--to", "--text", "--service", "--json"] as const;
+const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
+const MAX_VERSION_CHARS = 128;
+const SAFE_CWD = parse(process.execPath).root;
 
 export type IMessageInspection =
   | { ok: true; code: "ready"; version: string }
@@ -29,46 +28,23 @@ export async function inspectIMessage(
     return { ok: false, code: "driver_not_found" };
   }
 
-  const executable = await findExecutableOnPath("imsg");
+  const executable = await findImsg();
   if (!executable) {
     return { ok: false, code: "driver_not_found" };
   }
 
-  const versionResult = await runSafeProcess(
-    executable,
-    ["--version"],
-    INSPECTION_TIMEOUT_MS,
-  );
-  const versionFailure = inspectionProcessFailure(versionResult);
-  if (versionFailure) {
-    return versionFailure;
+  const result = await runImsg(executable, ["--version"], INSPECTION_TIMEOUT_MS);
+  if (result.kind === "not_found") {
+    return { ok: false, code: "driver_not_found" };
+  }
+  if (result.kind !== "exited") {
+    return { ok: false, code: "driver_failed" };
   }
 
-  const version = boundedFirstLine(versionResult.stdout);
-  if (!version || versionResult.stdoutTruncated || versionResult.stderrTruncated) {
-    return { ok: false, code: "driver_invalid_response" };
-  }
-
-  const helpResult = await runSafeProcess(
-    executable,
-    ["send", "--help"],
-    INSPECTION_TIMEOUT_MS,
-  );
-  const helpFailure = inspectionProcessFailure(helpResult);
-  if (helpFailure) {
-    return helpFailure;
-  }
-
-  if (helpResult.stdoutTruncated || helpResult.stderrTruncated) {
-    return { ok: false, code: "driver_invalid_response" };
-  }
-
-  const help = `${helpResult.stdout}\n${helpResult.stderr}`;
-  if (!REQUIRED_SEND_FLAGS.every((flag) => help.includes(flag))) {
-    return { ok: false, code: "driver_invalid_response" };
-  }
-
-  return { ok: true, code: "ready", version };
+  const version = firstLine(result.stdout);
+  return version
+    ? { ok: true, code: "ready", version }
+    : { ok: false, code: "driver_invalid_response" };
 }
 
 export async function sendIMessage(
@@ -81,12 +57,12 @@ export async function sendIMessage(
     return { status: "failed", code: "driver_not_found" };
   }
 
-  const executable = await findExecutableOnPath("imsg");
+  const executable = await findImsg();
   if (!executable) {
     return { status: "failed", code: "driver_not_found" };
   }
 
-  const result = await runSafeProcess(
+  const result = await runImsg(
     executable,
     [
       "send",
@@ -106,25 +82,86 @@ export async function sendIMessage(
       return { status: "failed", code: "driver_not_found" };
     case "timed_out":
       return { status: "failed", code: "driver_timeout" };
-    case "signaled":
+    case "terminated":
       return { status: "failed", code: "driver_terminated" };
     case "failed":
       return { status: "failed", code: "driver_failed" };
     case "exited":
-      if (result.exitCode !== 0) {
-        return { status: "failed", code: "driver_failed" };
-      }
-      return isAcceptedResponse(result.stdout, result.stdoutTruncated)
+      return isAcceptedResponse(result.stdout)
         ? { status: "accepted", code: "imsg_accepted" }
         : { status: "failed", code: "driver_invalid_response" };
   }
 }
 
-function isAcceptedResponse(stdout: string, truncated: boolean): boolean {
-  if (truncated) {
-    return false;
+async function findImsg(searchPath = process.env.PATH): Promise<string | null> {
+  if (!searchPath) {
+    return null;
   }
 
+  for (const directory of searchPath.split(delimiter)) {
+    if (!isAbsolute(directory)) {
+      continue;
+    }
+
+    try {
+      const executable = await realpath(join(directory, "imsg"));
+      if (!(await stat(executable)).isFile()) {
+        continue;
+      }
+      await access(executable, fsConstants.X_OK);
+      return executable;
+    } catch {
+      // PATH is an explicit user trust boundary; keep scanning silently.
+    }
+  }
+
+  return null;
+}
+
+type ImsgProcessResult =
+  | { kind: "exited"; stdout: string }
+  | { kind: "failed" | "not_found" | "terminated" | "timed_out"; stdout: "" };
+
+function runImsg(
+  executable: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<ImsgProcessResult> {
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      [...args],
+      {
+        cwd: SAFE_CWD,
+        encoding: "utf8",
+        env: childEnvironment(),
+        killSignal: "SIGKILL",
+        maxBuffer: MAX_PROCESS_OUTPUT_BYTES,
+        shell: false,
+        timeout: timeoutMs,
+        windowsHide: true,
+      },
+      (error, stdout) => {
+        if (!error) {
+          resolve({ kind: "exited", stdout });
+          return;
+        }
+
+        if (isErrorCode(error, "ENOENT")) {
+          resolve({ kind: "not_found", stdout: "" });
+        } else if (error.killed && error.signal === "SIGKILL") {
+          resolve({ kind: "timed_out", stdout: "" });
+        } else if (error.signal) {
+          resolve({ kind: "terminated", stdout: "" });
+        } else {
+          resolve({ kind: "failed", stdout: "" });
+        }
+      },
+    );
+  });
+}
+
+function isAcceptedResponse(stdout: string): boolean {
   let value: unknown;
   try {
     value = JSON.parse(stdout.trim()) as unknown;
@@ -141,20 +178,28 @@ function isAcceptedResponse(stdout: string, truncated: boolean): boolean {
   );
 }
 
-function inspectionProcessFailure(
-  result: SafeProcessResult,
-): Extract<IMessageInspection, { ok: false }> | null {
-  if (result.kind === "not_found") {
-    return { ok: false, code: "driver_not_found" };
-  }
-  if (result.kind !== "exited" || result.exitCode !== 0) {
-    return { ok: false, code: "driver_failed" };
-  }
-  return null;
+function firstLine(stdout: string): string {
+  const value = stdout.split(/\r?\n/u, 1)[0] ?? "";
+  const cleaned = value.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  return Array.from(cleaned).slice(0, MAX_VERSION_CHARS).join("");
 }
 
-function boundedFirstLine(stdout: string): string {
-  const firstLine = stdout.split(/\r?\n/u, 1)[0] ?? "";
-  const cleaned = firstLine.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
-  return Array.from(cleaned).slice(0, MAX_IMSG_VERSION_CHARS).join("");
+function childEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin" };
+  for (const name of ["HOME", "LANG", "LC_ALL", "TMPDIR"] as const) {
+    const value = process.env[name];
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
 }

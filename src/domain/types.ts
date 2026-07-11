@@ -6,13 +6,8 @@ export type Driver = "imsg" | "node-http";
 
 export interface CodexStopInput {
   session_id: string;
-  transcript_path: string | null;
-  cwd: string;
   hook_event_name: "Stop";
-  model: string;
-  permission_mode: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
   turn_id: string;
-  stop_hook_active: boolean;
   last_assistant_message: string | null;
 }
 
@@ -47,7 +42,6 @@ export interface WebhookDestination extends BaseDestination {
   transport: "webhook";
   url: ResolvableValue;
   headers: Readonly<Record<string, SecretReference>>;
-  allowPrivateNetwork: boolean;
   allowInsecureHttp: boolean;
 }
 

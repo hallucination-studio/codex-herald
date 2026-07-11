@@ -63,7 +63,6 @@ include_prompt = false
           transport: "webhook",
           url: { kind: "env", name: "OPS_WEBHOOK_URL" },
           headers: {},
-          allowPrivateNetwork: false,
           allowInsecureHttp: false,
           timeoutMs: 10_000,
         },
@@ -83,7 +82,6 @@ include_prompt = false
             },
             "X-Trace": { kind: "env", name: "TRACE_TOKEN" },
           },
-          allowPrivateNetwork: false,
           allowInsecureHttp: false,
           timeoutMs: 10_000,
         },
@@ -246,39 +244,38 @@ include_prompt = false
     }
   });
 
-  it("accepts insecure private webhooks only with both explicit opt-ins", () => {
+  it("accepts HTTP webhooks only with the explicit insecure opt-in", () => {
     assertConfigError(() =>
       parseConfigText(validConfig({ webhookUrl: "http://127.0.0.1/hook" })),
-    );
-    assertConfigError(() =>
-      parseConfigText(
-        validConfig({
-          webhookUrl: "http://127.0.0.1/hook",
-          webhookFlags: "allow_insecure_http = true",
-        }),
-      ),
-    );
-    assertConfigError(() =>
-      parseConfigText(
-        validConfig({
-          webhookUrl: "$OPS_WEBHOOK_URL",
-          webhookFlags: "allow_insecure_http = true",
-        }),
-      ),
     );
 
     const config = parseConfigText(
       validConfig({
         webhookUrl: "http://127.0.0.1/hook",
-        webhookFlags: "allow_insecure_http = true\nallow_private_network = true",
+        webhookFlags: "allow_insecure_http = true",
       }),
     );
     const destination = config.destinations.ops;
     assert.equal(destination?.transport, "webhook");
     if (destination?.transport === "webhook") {
       assert.equal(destination.allowInsecureHttp, true);
-      assert.equal(destination.allowPrivateNetwork, true);
     }
+
+    const secretUrl = parseConfigText(
+      validConfig({
+        webhookUrl: "$OPS_WEBHOOK_URL",
+        webhookFlags: "allow_insecure_http = true",
+      }),
+    );
+    assert.equal(
+      secretUrl.destinations.ops?.transport === "webhook" &&
+        secretUrl.destinations.ops.allowInsecureHttp,
+      true,
+    );
+
+    assertConfigError(() =>
+      parseConfigText(validConfig({ webhookFlags: "allow_private_network = true" })),
+    );
   });
 
   it("rejects URL userinfo and literal webhook header values", () => {

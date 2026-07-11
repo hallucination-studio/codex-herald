@@ -15,11 +15,6 @@ const DEFAULT_CONCURRENCY = 8;
 export interface ReceiptRepository {
   hasAccepted(eventId: string, destination: string): Promise<boolean>;
   append(receipt: DeliveryReceipt): Promise<void>;
-  withDeliveryLock<T>(
-    eventId: string,
-    destination: string,
-    action: (alreadyAccepted: boolean) => Promise<T>,
-  ): Promise<T>;
 }
 
 export async function routeEvent(
@@ -58,42 +53,48 @@ export async function routeEvent(
       return receipt;
     }
 
-    return receipts.withDeliveryLock(
-      event.id,
-      destinationId,
-      async (alreadyAccepted) => {
-        if (alreadyAccepted) {
-          const receipt = createReceipt(
-            event,
-            destination,
-            { status: "skipped", code: "duplicate_event" },
-            dependencies,
-            0,
-          );
-          await receipts.append(receipt);
-          return receipt;
-        }
+    if (await hasAccepted(receipts, event.id, destinationId)) {
+      const receipt = createReceipt(
+        event,
+        destination,
+        { status: "skipped", code: "duplicate_event" },
+        dependencies,
+        0,
+      );
+      await receipts.append(receipt);
+      return receipt;
+    }
 
-        const startedAt = performance.now();
-        let outcome: DeliveryOutcome;
-        try {
-          outcome = await send(destination, event, notification, dependencies);
-        } catch {
-          outcome = { status: "failed", code: "internal_error" };
-        }
+    const startedAt = performance.now();
+    let outcome: DeliveryOutcome;
+    try {
+      outcome = await send(destination, event, notification, dependencies);
+    } catch {
+      outcome = { status: "failed", code: "internal_error" };
+    }
 
-        const receipt = createReceipt(
-          event,
-          destination,
-          outcome,
-          dependencies,
-          performance.now() - startedAt,
-        );
-        await receipts.append(receipt);
-        return receipt;
-      },
+    const receipt = createReceipt(
+      event,
+      destination,
+      outcome,
+      dependencies,
+      performance.now() - startedAt,
     );
+    await receipts.append(receipt);
+    return receipt;
   });
+}
+
+async function hasAccepted(
+  receipts: ReceiptRepository,
+  eventId: string,
+  destination: string,
+): Promise<boolean> {
+  try {
+    return await receipts.hasAccepted(eventId, destination);
+  } catch {
+    return false;
+  }
 }
 
 function matchingDestinations(config: HeraldConfig, event: LifecycleEvent): string[] {

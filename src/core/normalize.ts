@@ -12,19 +12,8 @@ export const MAX_CODEX_STOP_INPUT_BYTES = 1024 * 1024;
 
 export const CodexStopInputSchema = z.object({
   session_id: z.string().min(1),
-  transcript_path: z.string().nullable(),
-  cwd: z.string(),
   hook_event_name: z.literal("Stop"),
-  model: z.string().min(1),
-  permission_mode: z.enum([
-    "default",
-    "acceptEdits",
-    "plan",
-    "dontAsk",
-    "bypassPermissions",
-  ]),
   turn_id: z.string().min(1),
-  stop_hook_active: z.boolean(),
   last_assistant_message: z.string().nullable(),
 });
 

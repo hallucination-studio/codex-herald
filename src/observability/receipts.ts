@@ -1,15 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  rename,
-  rmdir,
-  unlink,
-} from "node:fs/promises";
+import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { ReceiptRepository } from "../core/router.js";
@@ -20,13 +10,8 @@ export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
-const LOCK_RETRY_MS = 10;
-const LOCK_MAX_ATTEMPTS = 200;
-const LOCK_STALE_MS = 30_000;
-const DELIVERY_LOCK_MAX_ATTEMPTS = 3_500;
-const DELIVERY_LOCK_STALE_MS = 30_000;
-const LOCK_INITIALIZATION_STALE_MS = 1_000;
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+const receiptQueues = new Map<string, Promise<void>>();
 
 export function resolveReceiptPath(
   environment: NodeJS.ProcessEnv = process.env,
@@ -122,20 +107,25 @@ export async function readAcceptedKeys(
 export function createReceiptRepository(
   receiptPath = resolveReceiptPath(),
 ): ReceiptRepository {
+  let acceptedKeys: Promise<Set<string>> | undefined;
+  const loadAcceptedKeys = () => {
+    acceptedKeys ??= readAcceptedKeys(receiptPath);
+    return acceptedKeys;
+  };
+
   return {
     async hasAccepted(eventId, destination) {
-      return (await readAcceptedKeys(receiptPath)).has(
-        acceptedKey(eventId, destination),
-      );
+      return (await loadAcceptedKeys()).has(acceptedKey(eventId, destination));
     },
     async append(receipt) {
       await appendReceipt(receipt, receiptPath);
-    },
-    async withDeliveryLock(eventId, destination, action) {
-      return withDeliveryLock(receiptPath, eventId, destination, async () => {
-        const fresh = await readAcceptedKeys(receiptPath);
-        return action(fresh.has(acceptedKey(eventId, destination)));
-      });
+      if (acceptedKeys && receipt.status === "accepted" && receipt.destination) {
+        try {
+          (await acceptedKeys).add(acceptedKey(receipt.eventId, receipt.destination));
+        } catch {
+          // A failed best-effort lookup must not turn a recorded send into failure.
+        }
+      }
     },
   };
 }
@@ -301,192 +291,21 @@ async function withReceiptLock<T>(
   receiptPath: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  return withLock(`${receiptPath}.lock`, action);
-}
+  const previous = receiptQueues.get(receiptPath) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  receiptQueues.set(receiptPath, tail);
 
-async function withDeliveryLock<T>(
-  receiptPath: string,
-  eventId: string,
-  destination: string,
-  action: () => Promise<T>,
-): Promise<T> {
-  await ensurePrivateDirectory(receiptPath);
-  const digest = createHash("sha256")
-    .update(acceptedKey(eventId, destination))
-    .digest("hex");
-  const lockPath = `${receiptPath}.${digest}.delivery.lock`;
-  return withLock(lockPath, action, DELIVERY_LOCK_MAX_ATTEMPTS, DELIVERY_LOCK_STALE_MS);
-}
-
-async function withLock<T>(
-  lockPath: string,
-  action: () => Promise<T>,
-  maxAttempts = LOCK_MAX_ATTEMPTS,
-  staleMs = LOCK_STALE_MS,
-): Promise<T> {
-  const lock = await acquireLock(lockPath, maxAttempts, staleMs);
+  await previous;
   try {
     return await action();
   } finally {
-    await lock.release();
-  }
-}
-
-interface HeldLock {
-  release(): Promise<void>;
-}
-
-async function acquireLock(
-  lockPath: string,
-  maxAttempts = LOCK_MAX_ATTEMPTS,
-  staleMs = LOCK_STALE_MS,
-): Promise<HeldLock> {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      await mkdir(lockPath, { mode: DIRECTORY_MODE });
-    } catch (error) {
-      if (!hasErrorCode(error, "EEXIST")) {
-        throw error;
-      }
-
-      await removeStaleLockDirectory(lockPath, staleMs);
-      await delay(LOCK_RETRY_MS);
-      continue;
-    }
-
-    await chmod(lockPath, DIRECTORY_MODE);
-    const ownerPath = join(lockPath, `owner.${process.pid}.${randomUUID()}`);
-    let handle: Awaited<ReturnType<typeof open>> | undefined;
-    try {
-      handle = await open(
-        ownerPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_FOLLOW,
-        FILE_MODE,
-      );
-      await handle.writeFile(`${process.pid}\n`, "utf8");
-      await handle.sync();
-      await handle.chmod(FILE_MODE);
-      await handle.close();
-      handle = undefined;
-    } catch (error) {
-      await handle?.close();
-      await unlinkIfPresent(ownerPath);
-      await removeEmptyLockDirectory(lockPath);
-      if (hasErrorCode(error, "ENOENT")) {
-        await delay(LOCK_RETRY_MS);
-        continue;
-      }
-      throw error;
-    }
-
-    return {
-      async release() {
-        await unlinkIfPresent(ownerPath);
-        await removeOwnedLockDirectory(lockPath);
-      },
-    };
-  }
-
-  throw new Error("Timed out waiting for the receipt store lock");
-}
-
-async function removeStaleLockDirectory(
-  lockPath: string,
-  staleMs: number,
-): Promise<void> {
-  let information: Stats;
-  try {
-    information = await lstat(lockPath);
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return;
-    }
-    throw error;
-  }
-
-  if (!information.isDirectory() || information.isSymbolicLink()) {
-    throw new Error("Receipt lock path must be a regular directory");
-  }
-
-  let entries: string[];
-  try {
-    entries = await readdir(lockPath);
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return;
-    }
-    throw error;
-  }
-
-  if (entries.length === 0) {
-    if (
-      Date.now() - information.mtimeMs >
-      Math.min(staleMs, LOCK_INITIALIZATION_STALE_MS)
-    ) {
-      await removeEmptyLockDirectory(lockPath);
-    }
-    return;
-  }
-
-  for (const entry of entries) {
-    const ownerPath = join(lockPath, entry);
-    const ownerPid = parseOwnerPid(entry);
-    if (ownerPid !== undefined) {
-      if (!isProcessAlive(ownerPid)) {
-        await unlinkIfPresent(ownerPath);
-      }
-      continue;
-    }
-
-    try {
-      const ownerInformation = await lstat(ownerPath);
-      if (Date.now() - ownerInformation.mtimeMs > staleMs) {
-        await unlinkIfPresent(ownerPath);
-      }
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) {
-        throw error;
-      }
-    }
-  }
-
-  await removeEmptyLockDirectory(lockPath);
-}
-
-function parseOwnerPid(name: string): number | undefined {
-  const match = /^owner\.(\d+)\.[0-9A-Za-z-]+$/u.exec(name);
-  if (!match?.[1]) {
-    return undefined;
-  }
-  const pid = Number.parseInt(match[1], 10);
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !hasErrorCode(error, "ESRCH");
-  }
-}
-
-async function removeOwnedLockDirectory(path: string): Promise<void> {
-  try {
-    await rmdir(path);
-  } catch (error) {
-    if (!hasErrorCode(error, "ENOENT")) {
-      throw error;
-    }
-  }
-}
-
-async function removeEmptyLockDirectory(path: string): Promise<void> {
-  try {
-    await rmdir(path);
-  } catch (error) {
-    if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTEMPTY")) {
-      throw error;
+    release?.();
+    if (receiptQueues.get(receiptPath) === tail) {
+      receiptQueues.delete(receiptPath);
     }
   }
 }
@@ -516,8 +335,4 @@ function hasErrorCode(error: unknown, code: string): boolean {
     "code" in error &&
     error.code === code
   );
-}
-
-async function delay(milliseconds: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

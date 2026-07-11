@@ -68,10 +68,10 @@ Delivery receipt
   <code>imsg</code> available on the Codex host PATH, and Automation permission
   for the app that launches <code>imsg</code> to control Messages.
 
-Herald does not execute <code>imsg</code> on non-macOS hosts. On macOS it rejects
-world-writable PATH directories and group/world-writable executable targets.
-Current-user-owned Homebrew-style directories with mode <code>0775</code> are
-supported when the resolved executable itself is safe.
+Herald does not execute <code>imsg</code> on non-macOS hosts. On macOS, the
+user-provided PATH is an explicit trust boundary: Herald resolves
+<code>imsg</code> to an absolute executable, then runs fixed argv without a
+shell, from a safe cwd and with a minimal environment.
 
 Codex Herald currently targets and tests the **imsg v0.12.3 CLI contract**. It
 always selects iMessage explicitly and does not fall back to SMS:
@@ -163,7 +163,6 @@ recipient = "+12025550123"
 [destinations.ops]
 transport = "webhook"
 url = "$OPS_WEBHOOK_URL"
-allow_private_network = false
 allow_insecure_http = false
 
 [destinations.ops.headers]
@@ -223,20 +222,17 @@ Unknown keys and invalid route references are rejected. The only MVP event is
 <code>turn.finished</code>, the only template is <code>compact</code>, and
 <code>privacy.include_prompt</code> must remain <code>false</code>.
 
-### Webhook SSRF controls
+### Webhook safety
 
-Remote webhook destinations use HTTPS by default. Herald rejects URL userinfo,
-redirects, and unsafe DNS results, validates every resolved A/AAAA address, and
-pins the request to a validated address.
+Webhook destinations use HTTPS by default. Herald rejects URL userinfo, does
+not follow redirects, bounds secret preparation and the request with one
+deadline, and closes response bodies immediately after classifying the status.
 
-- Private, loopback, link-local, and similar targets require
-  <code>allow_private_network = true</code>.
-- Plain HTTP additionally requires
-  <code>allow_insecure_http = true</code>.
-- Plain HTTP is still limited to explicitly allowed private-network targets;
-  the flags do not enable arbitrary remote HTTP.
+- Plain HTTP requires <code>allow_insecure_http = true</code>.
+- Destination hosts are trusted user configuration. MVP does not classify or
+  pin DNS answers, so it does not claim DNS-rebinding protection.
 
-Only enable either flag for a destination you control and understand. See the
+Only enable HTTP for a destination you control and understand. See the
 [security model](docs/security.md) for the full trust-boundary analysis.
 
 ## Commands
@@ -245,7 +241,7 @@ Only enable either flag for a destination you control and understand. See the
 | --- | --- |
 | <code>codex-herald setup [--config PATH] [--force]</code> | Create a safe starter config; <code>--force</code> replaces an existing regular file |
 | <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Send a real test notification and print its receipt |
-| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret/DNS readiness, imsg compatibility, receipt path, and Hook trust guidance without sending a notification |
+| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg availability, receipt path, and Hook trust guidance without sending a notification |
 | <code>codex-herald ingest --source codex-stop [--config PATH]</code> | Non-interactive adapter used by the bundled Stop Hook |
 | <code>codex-herald --help</code> | Show CLI usage |
 | <code>codex-herald --version</code> | Show the package version |
@@ -292,9 +288,9 @@ continue.
 Codex launches matching command hooks concurrently. Another Stop Hook may ask
 Codex to continue the turn, which can lead to a later Stop event for the same
 turn. Herald derives a stable event id from the session id, turn id, Stop name,
-and last-assistant-message hash. An identical event already accepted for a
-destination is skipped, but a later continuation with different assistant text
-is a new lifecycle fact.
+and last-assistant-message hash. Herald checks existing accepted receipts before
+sending, but overlapping Hook processes may still race and deliver a duplicate.
+A later continuation with different assistant text is a new lifecycle fact.
 
 Herald itself never returns <code>decision: "block"</code>,
 <code>continue: false</code>, or exit code <code>2</code> from its packaged
@@ -334,10 +330,9 @@ timestamps, and durations. They never contain notification bodies, webhook
 URLs or headers, recipients, resolved secrets, raw process output, or exception
 stacks.
 
-Event/destination delivery is serialized across processes with private lock
-directories and unique owner records. After acquiring a lock, Herald rereads
-durable accepted receipts before sending. A dead owner can be recovered without
-allowing an older process to delete a newer owner's lock.
+Accepted receipts are checked on a best-effort basis before sending. This avoids
+ordinary repeat invocations, but MVP does not claim exactly-once delivery across
+overlapping Hook processes.
 
 Receipt statuses are intentionally conservative:
 
@@ -369,8 +364,7 @@ For the MVP:
 
 Review the [MVP specification](docs/spec.md),
 [security model](docs/security.md), and
-[ADR-001: local-first plugin and CLI](docs/decisions/0001-local-first-plugin-and-cli.md),
-plus [ADR-002: cross-process delivery locks](docs/decisions/0002-cross-process-delivery-locks.md),
+[ADR-001: local-first plugin and CLI](docs/decisions/0001-local-first-plugin-and-cli.md)
 before changing a public contract.
 
 ## Contributing

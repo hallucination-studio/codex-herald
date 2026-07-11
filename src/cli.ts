@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { readLimitedText } from "./cli/input.js";
@@ -498,6 +498,6 @@ const defaultIo: CliIo = {
 };
 
 const entryPath = process.argv[1];
-if (entryPath && import.meta.url === pathToFileURL(resolve(entryPath)).href) {
+if (entryPath && import.meta.url === pathToFileURL(realpathSync(entryPath)).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }

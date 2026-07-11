@@ -1,845 +1,14 @@
 #!/usr/bin/env node
-var __create = Object.create;
 var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
-};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-
-// node_modules/ipaddr.js/lib/ipaddr.js
-var require_ipaddr = __commonJS({
-  "node_modules/ipaddr.js/lib/ipaddr.js"(exports, module) {
-    (function(root) {
-      "use strict";
-      const ipv4Part = "(0?\\d+|0x[a-f0-9]+)";
-      const ipv4Regexes = {
-        fourOctet: new RegExp(`^${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}$`, "i"),
-        threeOctet: new RegExp(`^${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}$`, "i"),
-        twoOctet: new RegExp(`^${ipv4Part}\\.${ipv4Part}$`, "i"),
-        longValue: new RegExp(`^${ipv4Part}$`, "i")
-      };
-      const octalRegex = new RegExp(`^0[0-7]+$`, "i");
-      const hexRegex = new RegExp(`^0x[a-f0-9]+$`, "i");
-      const zoneIndex = "%[0-9a-z]{1,}";
-      const ipv6Part = "(?:[0-9a-f]+::?)+";
-      const ipv6Regexes = {
-        zoneIndex: new RegExp(zoneIndex, "i"),
-        "native": new RegExp(`^(::)?(${ipv6Part})?([0-9a-f]+)?(::)?(${zoneIndex})?$`, "i"),
-        deprecatedTransitional: new RegExp(`^(?:::)(${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}(${zoneIndex})?)$`, "i"),
-        transitional: new RegExp(`^((?:${ipv6Part})|(?:::)(?:${ipv6Part})?)${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}\\.${ipv4Part}(${zoneIndex})?$`, "i")
-      };
-      function expandIPv6(string4, parts) {
-        if (string4.indexOf("::") !== string4.lastIndexOf("::")) {
-          return null;
-        }
-        let colonCount = 0;
-        let lastColon = -1;
-        let zoneId = (string4.match(ipv6Regexes.zoneIndex) || [])[0];
-        let replacement, replacementCount;
-        if (zoneId) {
-          zoneId = zoneId.substring(1);
-          string4 = string4.replace(/%.+$/, "");
-        }
-        while ((lastColon = string4.indexOf(":", lastColon + 1)) >= 0) {
-          colonCount++;
-        }
-        if (string4.substr(0, 2) === "::") {
-          colonCount--;
-        }
-        if (string4.substr(-2, 2) === "::") {
-          colonCount--;
-        }
-        if (colonCount > parts) {
-          return null;
-        }
-        replacementCount = parts - colonCount;
-        replacement = ":";
-        while (replacementCount--) {
-          replacement += "0:";
-        }
-        string4 = string4.replace("::", replacement);
-        if (string4[0] === ":") {
-          string4 = string4.slice(1);
-        }
-        if (string4[string4.length - 1] === ":") {
-          string4 = string4.slice(0, -1);
-        }
-        parts = (function() {
-          const ref = string4.split(":");
-          const results = [];
-          for (let i = 0; i < ref.length; i++) {
-            results.push(parseInt(ref[i], 16));
-          }
-          return results;
-        })();
-        return {
-          parts,
-          zoneId
-        };
-      }
-      function matchCIDR(first, second, partSize, cidrBits) {
-        if (first.length !== second.length) {
-          throw new Error("ipaddr: cannot match CIDR for objects with different lengths");
-        }
-        let part = 0;
-        let shift;
-        while (cidrBits > 0) {
-          shift = partSize - cidrBits;
-          if (shift < 0) {
-            shift = 0;
-          }
-          if (first[part] >> shift !== second[part] >> shift) {
-            return false;
-          }
-          cidrBits -= partSize;
-          part += 1;
-        }
-        return true;
-      }
-      function parseIntAuto(string4) {
-        if (hexRegex.test(string4)) {
-          return parseInt(string4, 16);
-        }
-        if (string4[0] === "0" && !isNaN(parseInt(string4[1], 10))) {
-          if (octalRegex.test(string4)) {
-            return parseInt(string4, 8);
-          }
-          throw new Error(`ipaddr: cannot parse ${string4} as octal`);
-        }
-        return parseInt(string4, 10);
-      }
-      function padPart(part, length) {
-        while (part.length < length) {
-          part = `0${part}`;
-        }
-        return part;
-      }
-      const ipaddr3 = {};
-      ipaddr3.IPv4 = (function() {
-        function IPv4(octets) {
-          if (octets.length !== 4) {
-            throw new Error("ipaddr: ipv4 octet count should be 4");
-          }
-          let i, octet;
-          for (i = 0; i < octets.length; i++) {
-            octet = octets[i];
-            if (!(0 <= octet && octet <= 255)) {
-              throw new Error("ipaddr: ipv4 octet should fit in 8 bits");
-            }
-          }
-          this.octets = octets;
-        }
-        IPv4.prototype.SpecialRanges = {
-          unspecified: [[new IPv4([0, 0, 0, 0]), 8]],
-          broadcast: [[new IPv4([255, 255, 255, 255]), 32]],
-          // RFC3171
-          multicast: [[new IPv4([224, 0, 0, 0]), 4]],
-          // RFC3927
-          linkLocal: [[new IPv4([169, 254, 0, 0]), 16]],
-          // RFC5735
-          loopback: [[new IPv4([127, 0, 0, 0]), 8]],
-          // RFC6598
-          carrierGradeNat: [[new IPv4([100, 64, 0, 0]), 10]],
-          // RFC1918
-          "private": [
-            [new IPv4([10, 0, 0, 0]), 8],
-            [new IPv4([172, 16, 0, 0]), 12],
-            [new IPv4([192, 168, 0, 0]), 16]
-          ],
-          // Reserved and testing-only ranges; RFCs 5735, 5737, 2544, 1700
-          reserved: [
-            [new IPv4([192, 0, 0, 0]), 24],
-            [new IPv4([192, 0, 2, 0]), 24],
-            [new IPv4([192, 88, 99, 0]), 24],
-            [new IPv4([198, 18, 0, 0]), 15],
-            [new IPv4([198, 51, 100, 0]), 24],
-            [new IPv4([203, 0, 113, 0]), 24],
-            [new IPv4([240, 0, 0, 0]), 4]
-          ],
-          // RFC7534, RFC7535
-          as112: [
-            [new IPv4([192, 175, 48, 0]), 24],
-            [new IPv4([192, 31, 196, 0]), 24]
-          ],
-          // RFC7450
-          amt: [
-            [new IPv4([192, 52, 193, 0]), 24]
-          ]
-        };
-        IPv4.prototype.kind = function() {
-          return "ipv4";
-        };
-        IPv4.prototype.match = function(other, cidrRange) {
-          let ref;
-          if (cidrRange === void 0) {
-            ref = other;
-            other = ref[0];
-            cidrRange = ref[1];
-          }
-          if (other.kind() !== "ipv4") {
-            throw new Error("ipaddr: cannot match ipv4 address with non-ipv4 one");
-          }
-          return matchCIDR(this.octets, other.octets, 8, cidrRange);
-        };
-        IPv4.prototype.prefixLengthFromSubnetMask = function() {
-          let cidr = 0;
-          let stop = false;
-          const zerotable = {
-            0: 8,
-            128: 7,
-            192: 6,
-            224: 5,
-            240: 4,
-            248: 3,
-            252: 2,
-            254: 1,
-            255: 0
-          };
-          let i, octet, zeros;
-          for (i = 3; i >= 0; i -= 1) {
-            octet = this.octets[i];
-            if (octet in zerotable) {
-              zeros = zerotable[octet];
-              if (stop && zeros !== 0) {
-                return null;
-              }
-              if (zeros !== 8) {
-                stop = true;
-              }
-              cidr += zeros;
-            } else {
-              return null;
-            }
-          }
-          return 32 - cidr;
-        };
-        IPv4.prototype.range = function() {
-          return ipaddr3.subnetMatch(this, this.SpecialRanges);
-        };
-        IPv4.prototype.toByteArray = function() {
-          return this.octets.slice(0);
-        };
-        IPv4.prototype.toIPv4MappedAddress = function() {
-          return ipaddr3.IPv6.parse(`::ffff:${this.toString()}`);
-        };
-        IPv4.prototype.toNormalizedString = function() {
-          return this.toString();
-        };
-        IPv4.prototype.toString = function() {
-          return this.octets.join(".");
-        };
-        return IPv4;
-      })();
-      ipaddr3.IPv4.broadcastAddressFromCIDR = function(string4) {
-        try {
-          const cidr = this.parseCIDR(string4);
-          const ipInterfaceOctets = cidr[0].toByteArray();
-          const subnetMaskOctets = this.subnetMaskFromPrefixLength(cidr[1]).toByteArray();
-          const octets = [];
-          let i = 0;
-          while (i < 4) {
-            octets.push(parseInt(ipInterfaceOctets[i], 10) | parseInt(subnetMaskOctets[i], 10) ^ 255);
-            i++;
-          }
-          return new this(octets);
-        } catch (e) {
-          throw new Error("ipaddr: the address does not have IPv4 CIDR format");
-        }
-      };
-      ipaddr3.IPv4.isIPv4 = function(string4) {
-        return this.parser(string4) !== null;
-      };
-      ipaddr3.IPv4.isValid = function(string4) {
-        try {
-          new this(this.parser(string4));
-          return true;
-        } catch (e) {
-          return false;
-        }
-      };
-      ipaddr3.IPv4.isValidCIDR = function(string4) {
-        try {
-          this.parseCIDR(string4);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      };
-      ipaddr3.IPv4.isValidFourPartDecimal = function(string4) {
-        if (ipaddr3.IPv4.isValid(string4) && string4.match(/^(0|[1-9]\d*)(\.(0|[1-9]\d*)){3}$/)) {
-          return true;
-        } else {
-          return false;
-        }
-      };
-      ipaddr3.IPv4.isValidCIDRFourPartDecimal = function(string4) {
-        const match = string4.match(/^(.+)\/(\d+)$/);
-        if (!ipaddr3.IPv4.isValidCIDR(string4) || !match) {
-          return false;
-        }
-        return ipaddr3.IPv4.isValidFourPartDecimal(match[1]);
-      };
-      ipaddr3.IPv4.networkAddressFromCIDR = function(string4) {
-        let cidr, i, ipInterfaceOctets, octets, subnetMaskOctets;
-        try {
-          cidr = this.parseCIDR(string4);
-          ipInterfaceOctets = cidr[0].toByteArray();
-          subnetMaskOctets = this.subnetMaskFromPrefixLength(cidr[1]).toByteArray();
-          octets = [];
-          i = 0;
-          while (i < 4) {
-            octets.push(parseInt(ipInterfaceOctets[i], 10) & parseInt(subnetMaskOctets[i], 10));
-            i++;
-          }
-          return new this(octets);
-        } catch (e) {
-          throw new Error("ipaddr: the address does not have IPv4 CIDR format");
-        }
-      };
-      ipaddr3.IPv4.parse = function(string4) {
-        const parts = this.parser(string4);
-        if (parts === null) {
-          throw new Error("ipaddr: string is not formatted like an IPv4 Address");
-        }
-        return new this(parts);
-      };
-      ipaddr3.IPv4.parseCIDR = function(string4) {
-        let match;
-        if (match = string4.match(/^(.+)\/(\d+)$/)) {
-          const maskLength = parseInt(match[2]);
-          if (maskLength >= 0 && maskLength <= 32) {
-            const parsed = [this.parse(match[1]), maskLength];
-            Object.defineProperty(parsed, "toString", {
-              value: function() {
-                return this.join("/");
-              }
-            });
-            return parsed;
-          }
-        }
-        throw new Error("ipaddr: string is not formatted like an IPv4 CIDR range");
-      };
-      ipaddr3.IPv4.parser = function(string4) {
-        let match, part, value;
-        if (match = string4.match(ipv4Regexes.fourOctet)) {
-          return (function() {
-            const ref = match.slice(1, 6);
-            const results = [];
-            for (let i = 0; i < ref.length; i++) {
-              part = ref[i];
-              results.push(parseIntAuto(part));
-            }
-            return results;
-          })();
-        } else if (match = string4.match(ipv4Regexes.longValue)) {
-          value = parseIntAuto(match[1]);
-          if (value > 4294967295 || value < 0) {
-            throw new Error("ipaddr: address outside defined range");
-          }
-          return (function() {
-            const results = [];
-            let shift;
-            for (shift = 0; shift <= 24; shift += 8) {
-              results.push(value >> shift & 255);
-            }
-            return results;
-          })().reverse();
-        } else if (match = string4.match(ipv4Regexes.twoOctet)) {
-          return (function() {
-            const ref = match.slice(1, 4);
-            const results = [];
-            value = parseIntAuto(ref[1]);
-            if (value > 16777215 || value < 0) {
-              throw new Error("ipaddr: address outside defined range");
-            }
-            results.push(parseIntAuto(ref[0]));
-            results.push(value >> 16 & 255);
-            results.push(value >> 8 & 255);
-            results.push(value & 255);
-            return results;
-          })();
-        } else if (match = string4.match(ipv4Regexes.threeOctet)) {
-          return (function() {
-            const ref = match.slice(1, 5);
-            const results = [];
-            value = parseIntAuto(ref[2]);
-            if (value > 65535 || value < 0) {
-              throw new Error("ipaddr: address outside defined range");
-            }
-            results.push(parseIntAuto(ref[0]));
-            results.push(parseIntAuto(ref[1]));
-            results.push(value >> 8 & 255);
-            results.push(value & 255);
-            return results;
-          })();
-        } else {
-          return null;
-        }
-      };
-      ipaddr3.IPv4.subnetMaskFromPrefixLength = function(prefix) {
-        prefix = parseInt(prefix);
-        if (prefix < 0 || prefix > 32) {
-          throw new Error("ipaddr: invalid IPv4 prefix length");
-        }
-        const octets = [0, 0, 0, 0];
-        let j = 0;
-        const filledOctetCount = Math.floor(prefix / 8);
-        while (j < filledOctetCount) {
-          octets[j] = 255;
-          j++;
-        }
-        if (filledOctetCount < 4) {
-          octets[filledOctetCount] = Math.pow(2, prefix % 8) - 1 << 8 - prefix % 8;
-        }
-        return new this(octets);
-      };
-      ipaddr3.IPv6 = (function() {
-        function IPv6(parts, zoneId) {
-          let i, part;
-          if (parts.length === 16) {
-            this.parts = [];
-            for (i = 0; i <= 14; i += 2) {
-              this.parts.push(parts[i] << 8 | parts[i + 1]);
-            }
-          } else if (parts.length === 8) {
-            this.parts = parts;
-          } else {
-            throw new Error("ipaddr: ipv6 part count should be 8 or 16");
-          }
-          for (i = 0; i < this.parts.length; i++) {
-            part = this.parts[i];
-            if (!(0 <= part && part <= 65535)) {
-              throw new Error("ipaddr: ipv6 part should fit in 16 bits");
-            }
-          }
-          if (zoneId) {
-            this.zoneId = zoneId;
-          }
-        }
-        IPv6.prototype.SpecialRanges = {
-          // RFC4291, here and after
-          unspecified: [new IPv6([0, 0, 0, 0, 0, 0, 0, 0]), 128],
-          linkLocal: [new IPv6([65152, 0, 0, 0, 0, 0, 0, 0]), 10],
-          multicast: [new IPv6([65280, 0, 0, 0, 0, 0, 0, 0]), 8],
-          loopback: [new IPv6([0, 0, 0, 0, 0, 0, 0, 1]), 128],
-          uniqueLocal: [new IPv6([64512, 0, 0, 0, 0, 0, 0, 0]), 7],
-          ipv4Mapped: [new IPv6([0, 0, 0, 0, 0, 65535, 0, 0]), 96],
-          // RFC3879
-          deprecatedSiteLocal: [new IPv6([65216, 0, 0, 0, 0, 0, 0, 0]), 10],
-          // RFC6666
-          discard: [new IPv6([256, 0, 0, 0, 0, 0, 0, 0]), 64],
-          // RFC6145
-          rfc6145: [new IPv6([0, 0, 0, 0, 65535, 0, 0, 0]), 96],
-          rfc6052: [
-            // RFC6052
-            [new IPv6([100, 65435, 0, 0, 0, 0, 0, 0]), 96],
-            // RFC8215
-            [new IPv6([100, 65435, 1, 0, 0, 0, 0, 0]), 48]
-          ],
-          // RFC3056
-          "6to4": [new IPv6([8194, 0, 0, 0, 0, 0, 0, 0]), 16],
-          // RFC6052, RFC6146
-          teredo: [new IPv6([8193, 0, 0, 0, 0, 0, 0, 0]), 32],
-          // RFC5180
-          benchmarking: [new IPv6([8193, 2, 0, 0, 0, 0, 0, 0]), 48],
-          // RFC7450
-          amt: [new IPv6([8193, 3, 0, 0, 0, 0, 0, 0]), 32],
-          as112v6: [
-            // RFC7535
-            [new IPv6([8193, 4, 274, 0, 0, 0, 0, 0]), 48],
-            // RFC7534
-            [new IPv6([9760, 79, 32768, 0, 0, 0, 0, 0]), 48]
-          ],
-          // RFC4843
-          deprecatedOrchid: [new IPv6([8193, 16, 0, 0, 0, 0, 0, 0]), 28],
-          // RFC7343
-          orchid2: [new IPv6([8193, 32, 0, 0, 0, 0, 0, 0]), 28],
-          // RFC9374
-          droneRemoteIdProtocolEntityTags: [new IPv6([8193, 48, 0, 0, 0, 0, 0, 0]), 28],
-          // RFC9602
-          segmentRouting: [new IPv6([24320, 0, 0, 0, 0, 0, 0, 0]), 16],
-          reserved: [
-            // RFC3849
-            [new IPv6([8193, 0, 0, 0, 0, 0, 0, 0]), 23],
-            // RFC2928
-            [new IPv6([8193, 3512, 0, 0, 0, 0, 0, 0]), 32],
-            // RFC9637
-            [new IPv6([16383, 0, 0, 0, 0, 0, 0, 0]), 20]
-          ]
-        };
-        IPv6.prototype.isIPv4MappedAddress = function() {
-          return this.range() === "ipv4Mapped";
-        };
-        IPv6.prototype.kind = function() {
-          return "ipv6";
-        };
-        IPv6.prototype.match = function(other, cidrRange) {
-          let ref;
-          if (cidrRange === void 0) {
-            ref = other;
-            other = ref[0];
-            cidrRange = ref[1];
-          }
-          if (other.kind() !== "ipv6") {
-            throw new Error("ipaddr: cannot match ipv6 address with non-ipv6 one");
-          }
-          return matchCIDR(this.parts, other.parts, 16, cidrRange);
-        };
-        IPv6.prototype.prefixLengthFromSubnetMask = function() {
-          let cidr = 0;
-          let stop = false;
-          const zerotable = {
-            0: 16,
-            32768: 15,
-            49152: 14,
-            57344: 13,
-            61440: 12,
-            63488: 11,
-            64512: 10,
-            65024: 9,
-            65280: 8,
-            65408: 7,
-            65472: 6,
-            65504: 5,
-            65520: 4,
-            65528: 3,
-            65532: 2,
-            65534: 1,
-            65535: 0
-          };
-          let part, zeros;
-          for (let i = 7; i >= 0; i -= 1) {
-            part = this.parts[i];
-            if (part in zerotable) {
-              zeros = zerotable[part];
-              if (stop && zeros !== 0) {
-                return null;
-              }
-              if (zeros !== 16) {
-                stop = true;
-              }
-              cidr += zeros;
-            } else {
-              return null;
-            }
-          }
-          return 128 - cidr;
-        };
-        IPv6.prototype.range = function() {
-          return ipaddr3.subnetMatch(this, this.SpecialRanges);
-        };
-        IPv6.prototype.toByteArray = function() {
-          let part;
-          const bytes = [];
-          const ref = this.parts;
-          for (let i = 0; i < ref.length; i++) {
-            part = ref[i];
-            bytes.push(part >> 8);
-            bytes.push(part & 255);
-          }
-          return bytes;
-        };
-        IPv6.prototype.toFixedLengthString = function() {
-          const addr = (function() {
-            const results = [];
-            for (let i = 0; i < this.parts.length; i++) {
-              results.push(padPart(this.parts[i].toString(16), 4));
-            }
-            return results;
-          }).call(this).join(":");
-          let suffix = "";
-          if (this.zoneId) {
-            suffix = `%${this.zoneId}`;
-          }
-          return addr + suffix;
-        };
-        IPv6.prototype.toIPv4Address = function() {
-          if (!this.isIPv4MappedAddress()) {
-            throw new Error("ipaddr: trying to convert a generic ipv6 address to ipv4");
-          }
-          const ref = this.parts.slice(-2);
-          const high = ref[0];
-          const low = ref[1];
-          return new ipaddr3.IPv4([high >> 8, high & 255, low >> 8, low & 255]);
-        };
-        IPv6.prototype.toNormalizedString = function() {
-          const addr = (function() {
-            const results = [];
-            for (let i = 0; i < this.parts.length; i++) {
-              results.push(this.parts[i].toString(16));
-            }
-            return results;
-          }).call(this).join(":");
-          let suffix = "";
-          if (this.zoneId) {
-            suffix = `%${this.zoneId}`;
-          }
-          return addr + suffix;
-        };
-        IPv6.prototype.toRFC5952String = function() {
-          const regex = /((^|:)(0(:|$)){2,})/g;
-          const string4 = this.toNormalizedString();
-          let bestMatchIndex = 0;
-          let bestMatchLength = -1;
-          let match;
-          while (match = regex.exec(string4)) {
-            if (match[0].length > bestMatchLength) {
-              bestMatchIndex = match.index;
-              bestMatchLength = match[0].length;
-            }
-          }
-          if (bestMatchLength < 0) {
-            return string4;
-          }
-          return `${string4.substring(0, bestMatchIndex)}::${string4.substring(bestMatchIndex + bestMatchLength)}`;
-        };
-        IPv6.prototype.toString = function() {
-          return this.toRFC5952String();
-        };
-        return IPv6;
-      })();
-      ipaddr3.IPv6.broadcastAddressFromCIDR = function(string4) {
-        try {
-          const cidr = this.parseCIDR(string4);
-          const ipInterfaceOctets = cidr[0].toByteArray();
-          const subnetMaskOctets = this.subnetMaskFromPrefixLength(cidr[1]).toByteArray();
-          const octets = [];
-          let i = 0;
-          while (i < 16) {
-            octets.push(parseInt(ipInterfaceOctets[i], 10) | parseInt(subnetMaskOctets[i], 10) ^ 255);
-            i++;
-          }
-          return new this(octets);
-        } catch (e) {
-          throw new Error(`ipaddr: the address does not have IPv6 CIDR format (${e})`);
-        }
-      };
-      ipaddr3.IPv6.isIPv6 = function(string4) {
-        return this.parser(string4) !== null;
-      };
-      ipaddr3.IPv6.isValid = function(string4) {
-        if (typeof string4 === "string" && string4.indexOf(":") === -1) {
-          return false;
-        }
-        try {
-          const addr = this.parser(string4);
-          new this(addr.parts, addr.zoneId);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      };
-      ipaddr3.IPv6.isValidCIDR = function(string4) {
-        if (typeof string4 === "string" && string4.indexOf(":") === -1) {
-          return false;
-        }
-        try {
-          this.parseCIDR(string4);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      };
-      ipaddr3.IPv6.networkAddressFromCIDR = function(string4) {
-        let cidr, i, ipInterfaceOctets, octets, subnetMaskOctets;
-        try {
-          cidr = this.parseCIDR(string4);
-          ipInterfaceOctets = cidr[0].toByteArray();
-          subnetMaskOctets = this.subnetMaskFromPrefixLength(cidr[1]).toByteArray();
-          octets = [];
-          i = 0;
-          while (i < 16) {
-            octets.push(parseInt(ipInterfaceOctets[i], 10) & parseInt(subnetMaskOctets[i], 10));
-            i++;
-          }
-          return new this(octets);
-        } catch (e) {
-          throw new Error(`ipaddr: the address does not have IPv6 CIDR format (${e})`);
-        }
-      };
-      ipaddr3.IPv6.parse = function(string4) {
-        const addr = this.parser(string4);
-        if (addr.parts === null) {
-          throw new Error("ipaddr: string is not formatted like an IPv6 Address");
-        }
-        return new this(addr.parts, addr.zoneId);
-      };
-      ipaddr3.IPv6.parseCIDR = function(string4) {
-        let maskLength, match, parsed;
-        if (match = string4.match(/^(.+)\/(\d+)$/)) {
-          maskLength = parseInt(match[2]);
-          if (maskLength >= 0 && maskLength <= 128) {
-            parsed = [this.parse(match[1]), maskLength];
-            Object.defineProperty(parsed, "toString", {
-              value: function() {
-                return this.join("/");
-              }
-            });
-            return parsed;
-          }
-        }
-        throw new Error("ipaddr: string is not formatted like an IPv6 CIDR range");
-      };
-      ipaddr3.IPv6.parser = function(string4) {
-        let addr, i, match, octet, octets, zoneId;
-        if (match = string4.match(ipv6Regexes.deprecatedTransitional)) {
-          return this.parser(`::ffff:${match[1]}`);
-        }
-        if (ipv6Regexes.native.test(string4)) {
-          return expandIPv6(string4, 8);
-        }
-        if (match = string4.match(ipv6Regexes.transitional)) {
-          zoneId = match[6] || "";
-          addr = match[1];
-          if (!match[1].endsWith("::")) {
-            addr = addr.slice(0, -1);
-          }
-          addr = expandIPv6(addr + zoneId, 6);
-          if (addr.parts) {
-            octets = [
-              parseInt(match[2]),
-              parseInt(match[3]),
-              parseInt(match[4]),
-              parseInt(match[5])
-            ];
-            for (i = 0; i < octets.length; i++) {
-              octet = octets[i];
-              if (!(0 <= octet && octet <= 255)) {
-                return null;
-              }
-            }
-            addr.parts.push(octets[0] << 8 | octets[1]);
-            addr.parts.push(octets[2] << 8 | octets[3]);
-            return {
-              parts: addr.parts,
-              zoneId: addr.zoneId
-            };
-          }
-        }
-        return null;
-      };
-      ipaddr3.IPv6.subnetMaskFromPrefixLength = function(prefix) {
-        prefix = parseInt(prefix);
-        if (prefix < 0 || prefix > 128) {
-          throw new Error("ipaddr: invalid IPv6 prefix length");
-        }
-        const octets = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let j = 0;
-        const filledOctetCount = Math.floor(prefix / 8);
-        while (j < filledOctetCount) {
-          octets[j] = 255;
-          j++;
-        }
-        if (filledOctetCount < 16) {
-          octets[filledOctetCount] = Math.pow(2, prefix % 8) - 1 << 8 - prefix % 8;
-        }
-        return new this(octets);
-      };
-      ipaddr3.fromByteArray = function(bytes) {
-        const length = bytes.length;
-        if (length === 4) {
-          return new ipaddr3.IPv4(bytes);
-        } else if (length === 16) {
-          return new ipaddr3.IPv6(bytes);
-        } else {
-          throw new Error("ipaddr: the binary input is neither an IPv6 nor IPv4 address");
-        }
-      };
-      ipaddr3.isValid = function(string4) {
-        return ipaddr3.IPv6.isValid(string4) || ipaddr3.IPv4.isValid(string4);
-      };
-      ipaddr3.isValidCIDR = function(string4) {
-        return ipaddr3.IPv6.isValidCIDR(string4) || ipaddr3.IPv4.isValidCIDR(string4);
-      };
-      ipaddr3.parse = function(string4) {
-        if (ipaddr3.IPv6.isValid(string4)) {
-          return ipaddr3.IPv6.parse(string4);
-        } else if (ipaddr3.IPv4.isValid(string4)) {
-          return ipaddr3.IPv4.parse(string4);
-        } else {
-          throw new Error("ipaddr: the address has neither IPv6 nor IPv4 format");
-        }
-      };
-      ipaddr3.parseCIDR = function(string4) {
-        try {
-          return ipaddr3.IPv6.parseCIDR(string4);
-        } catch (e) {
-          try {
-            return ipaddr3.IPv4.parseCIDR(string4);
-          } catch (e2) {
-            throw new Error("ipaddr: the address has neither IPv6 nor IPv4 CIDR format");
-          }
-        }
-      };
-      ipaddr3.process = function(string4) {
-        const addr = this.parse(string4);
-        if (addr.kind() === "ipv6" && addr.isIPv4MappedAddress()) {
-          return addr.toIPv4Address();
-        } else {
-          return addr;
-        }
-      };
-      ipaddr3.subnetMatch = function(address, rangeList, defaultName) {
-        let i, rangeName, rangeSubnets, subnet;
-        if (defaultName === void 0 || defaultName === null) {
-          defaultName = "unicast";
-        }
-        for (rangeName in rangeList) {
-          if (Object.prototype.hasOwnProperty.call(rangeList, rangeName)) {
-            rangeSubnets = rangeList[rangeName];
-            if (rangeSubnets[0] && !(rangeSubnets[0] instanceof Array)) {
-              rangeSubnets = [rangeSubnets];
-            }
-            for (i = 0; i < rangeSubnets.length; i++) {
-              subnet = rangeSubnets[i];
-              if (address.kind() === subnet[0].kind() && address.match.apply(address, subnet)) {
-                return rangeName;
-              }
-            }
-          }
-        }
-        return defaultName;
-      };
-      if (typeof module !== "undefined" && module.exports) {
-        module.exports = ipaddr3;
-      } else {
-        root.ipaddr = ipaddr3;
-      }
-    })(exports);
-  }
-});
 
 // src/cli.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -889,9 +58,6 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-
-// src/config/parse.ts
-var import_ipaddr = __toESM(require_ipaddr(), 1);
 
 // node_modules/smol-toml/dist/date.js
 var DATE_TIME_RE = /^(\d{4}-\d{2}-\d{2})?[T ]?(?:(\d{2}):\d{2}(?::\d{2}(?:\.\d+)?)?)?(Z|[-+]\d{2}:\d{2})?$/i;
@@ -16098,7 +15264,6 @@ var webhookSchema = external_exports.strictObject({
   transport: external_exports.literal("webhook"),
   url: external_exports.string().min(1),
   headers: external_exports.record(external_exports.string().min(1), external_exports.string()).optional().default({}),
-  allow_private_network: external_exports.boolean().optional().default(false),
   allow_insecure_http: external_exports.boolean().optional().default(false)
 });
 var imessageSchema = external_exports.strictObject({
@@ -16188,9 +15353,6 @@ function buildConfig(raw) {
   };
 }
 function buildWebhookDestination(id, raw) {
-  if (raw.allow_insecure_http && !raw.allow_private_network) {
-    throw invalidConfig("allow_insecure_http requires allow_private_network = true");
-  }
   const headerEntries = [];
   const rawHeaderEntries = Object.entries(raw.headers);
   if (rawHeaderEntries.length > MAX_WEBHOOK_HEADERS) {
@@ -16206,22 +15368,17 @@ function buildWebhookDestination(id, raw) {
     headerEntries.push([name, reference]);
   }
   const headers = Object.fromEntries(headerEntries);
-  const url2 = parseResolvableUrl(
-    raw.url,
-    raw.allow_private_network,
-    raw.allow_insecure_http
-  );
+  const url2 = parseResolvableUrl(raw.url, raw.allow_insecure_http);
   return {
     id,
     transport: "webhook",
     url: url2,
     headers,
-    allowPrivateNetwork: raw.allow_private_network,
     allowInsecureHttp: raw.allow_insecure_http,
     timeoutMs: DEFAULT_TIMEOUT_MS
   };
 }
-function parseResolvableUrl(value, allowPrivateNetwork, allowInsecureHttp) {
+function parseResolvableUrl(value, allowInsecureHttp) {
   const reference = parseSecretReference(value);
   if (reference) {
     return reference;
@@ -16235,14 +15392,7 @@ function parseResolvableUrl(value, allowPrivateNetwork, allowInsecureHttp) {
   if (url2.username || url2.password) {
     throw invalidConfig("Webhook URL must not contain userinfo");
   }
-  const isPrivate = isKnownPrivateHost(url2.hostname);
-  if (isPrivate && !allowPrivateNetwork) {
-    throw invalidConfig("Private webhook URLs require allow_private_network = true");
-  }
   if (url2.protocol === "http:") {
-    if (!isPrivate) {
-      throw invalidConfig("Remote webhook URLs must use HTTPS");
-    }
     if (!allowInsecureHttp) {
       throw invalidConfig("Plain HTTP webhooks require allow_insecure_http = true");
     }
@@ -16265,13 +15415,6 @@ function parseSecretReference(value) {
     };
   }
   return void 0;
-}
-function isKnownPrivateHost(hostname3) {
-  const normalized = hostname3.toLowerCase().replace(/^\[|\]$/g, "");
-  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")) {
-    return true;
-  }
-  return import_ipaddr.default.isValid(normalized) && import_ipaddr.default.parse(normalized).range() !== "unicast";
 }
 function containsPrototypeKey(value) {
   if (typeof value !== "object" || value === null) {
@@ -16406,7 +15549,7 @@ function isErrno(error51) {
 // src/config/setup.ts
 import { randomUUID } from "node:crypto";
 import { constants as constants2 } from "node:fs";
-import { chmod, link, lstat as lstat2, mkdir, open as open2, rename, unlink } from "node:fs/promises";
+import { lstat as lstat2, mkdir, open as open2, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join as join2 } from "node:path";
 var DIRECTORY_MODE = 448;
 var FILE_MODE = 384;
@@ -16435,55 +15578,54 @@ max_chars = 500
 async function setupConfig(path, options = {}) {
   const directory = dirname(path);
   await ensureSafeDirectory(directory);
+  if (!options.force) {
+    await createExclusive(path);
+    return "created";
+  }
   const existing = await existingStats(path);
   if (existing) {
     assertReplaceable(path, existing);
-    if (!options.force) {
-      throw new HeraldError("SETUP_EXISTS", `Configuration already exists: ${path}`);
-    }
   }
   const temporaryPath = join2(
     directory,
     `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
   );
-  let handle;
   try {
-    handle = await open2(
-      temporaryPath,
-      constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY | NO_FOLLOW,
-      FILE_MODE
-    );
-    await handle.writeFile(DEFAULT_CONFIG, "utf8");
-    await handle.sync();
-    await handle.chmod(FILE_MODE);
-    await handle.close();
-    handle = void 0;
-    if (options.force) {
-      await replacePath(temporaryPath, path);
-    } else {
-      await installExclusive(temporaryPath, path);
-    }
-    await chmod(path, FILE_MODE);
+    await writeConfigFile(temporaryPath);
+    await replacePath(temporaryPath, path);
   } catch (error51) {
-    if (handle) {
-      await handle.close();
-    }
     await unlinkIfPresent(temporaryPath);
     throw error51;
   }
   return existing ? "replaced" : "created";
 }
-async function installExclusive(temporaryPath, path) {
+async function createExclusive(path) {
   try {
-    await link(temporaryPath, path);
+    await writeConfigFile(path);
   } catch (error51) {
-    const exists = isErrno2(error51, "EEXIST") || isErrno2(error51, "EPERM") && await existingStats(path) !== void 0;
-    if (exists) {
+    if (isErrno2(error51, "EEXIST")) {
+      const existing = await existingStats(path);
+      if (existing) {
+        assertReplaceable(path, existing);
+      }
       throw new HeraldError("SETUP_EXISTS", `Configuration already exists: ${path}`);
     }
     throw error51;
   }
-  await unlink(temporaryPath);
+}
+async function writeConfigFile(path) {
+  const handle = await open2(
+    path,
+    constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY | NO_FOLLOW,
+    FILE_MODE
+  );
+  try {
+    await handle.writeFile(DEFAULT_CONFIG, "utf8");
+    await handle.sync();
+    await handle.chmod(FILE_MODE);
+  } finally {
+    await handle.close();
+  }
 }
 async function replacePath(temporaryPath, path) {
   try {
@@ -16606,7 +15748,7 @@ function unavailable(message) {
   return new HeraldError("SECRET_UNAVAILABLE", message);
 }
 function readMacKeychain(service, account, signal) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve, reject) => {
     execFile(
       "/usr/bin/security",
       ["find-generic-password", "-s", service, "-a", account, "-w"],
@@ -16624,7 +15766,7 @@ function readMacKeychain(service, account, signal) {
           reject(new Error("Keychain lookup failed"));
           return;
         }
-        resolve2(stdout);
+        resolve(stdout);
       }
     );
   });
@@ -16652,19 +15794,8 @@ var EVENT_TYPE = "turn.finished";
 var MAX_CODEX_STOP_INPUT_BYTES = 1024 * 1024;
 var CodexStopInputSchema = external_exports.object({
   session_id: external_exports.string().min(1),
-  transcript_path: external_exports.string().nullable(),
-  cwd: external_exports.string(),
   hook_event_name: external_exports.literal("Stop"),
-  model: external_exports.string().min(1),
-  permission_mode: external_exports.enum([
-    "default",
-    "acceptEdits",
-    "plan",
-    "dontAsk",
-    "bypassPermissions"
-  ]),
   turn_id: external_exports.string().min(1),
-  stop_hook_active: external_exports.boolean(),
   last_assistant_message: external_exports.string().nullable()
 });
 function parseCodexStopText(text) {
@@ -16785,50 +15916,51 @@ async function routeEvent(config2, event, notification, dependencies, receipts, 
   return mapWithConcurrency(destinationIds, concurrency, async (destinationId) => {
     const destination = config2.destinations[destinationId];
     if (!destination) {
-      const receipt = createReceipt(
+      const receipt2 = createReceipt(
         event,
         null,
         { status: "failed", code: "config_invalid" },
         dependencies,
         0
       );
-      await receipts.append(receipt);
-      return receipt;
+      await receipts.append(receipt2);
+      return receipt2;
     }
-    return receipts.withDeliveryLock(
-      event.id,
-      destinationId,
-      async (alreadyAccepted) => {
-        if (alreadyAccepted) {
-          const receipt2 = createReceipt(
-            event,
-            destination,
-            { status: "skipped", code: "duplicate_event" },
-            dependencies,
-            0
-          );
-          await receipts.append(receipt2);
-          return receipt2;
-        }
-        const startedAt = performance.now();
-        let outcome;
-        try {
-          outcome = await send(destination, event, notification, dependencies);
-        } catch {
-          outcome = { status: "failed", code: "internal_error" };
-        }
-        const receipt = createReceipt(
-          event,
-          destination,
-          outcome,
-          dependencies,
-          performance.now() - startedAt
-        );
-        await receipts.append(receipt);
-        return receipt;
-      }
+    if (await hasAccepted(receipts, event.id, destinationId)) {
+      const receipt2 = createReceipt(
+        event,
+        destination,
+        { status: "skipped", code: "duplicate_event" },
+        dependencies,
+        0
+      );
+      await receipts.append(receipt2);
+      return receipt2;
+    }
+    const startedAt = performance.now();
+    let outcome;
+    try {
+      outcome = await send(destination, event, notification, dependencies);
+    } catch {
+      outcome = { status: "failed", code: "internal_error" };
+    }
+    const receipt = createReceipt(
+      event,
+      destination,
+      outcome,
+      dependencies,
+      performance.now() - startedAt
     );
+    await receipts.append(receipt);
+    return receipt;
   });
+}
+async function hasAccepted(receipts, eventId, destination) {
+  try {
+    return await receipts.hasAccepted(eventId, destination);
+  } catch {
+    return false;
+  }
 }
 function matchingDestinations(config2, event) {
   const destinationIds = /* @__PURE__ */ new Set();
@@ -16892,30 +16024,15 @@ async function mapWithConcurrency(values, requestedConcurrency, operation) {
 }
 
 // src/observability/receipts.ts
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
 import { constants as constants3 } from "node:fs";
-import {
-  chmod as chmod2,
-  lstat as lstat3,
-  mkdir as mkdir2,
-  open as open3,
-  readdir,
-  rename as rename2,
-  rmdir,
-  unlink as unlink2
-} from "node:fs/promises";
+import { chmod, lstat as lstat3, mkdir as mkdir2, open as open3, rename as rename2, unlink as unlink2 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3 } from "node:path";
 var RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 var DIRECTORY_MODE2 = 448;
 var FILE_MODE2 = 384;
-var LOCK_RETRY_MS = 10;
-var LOCK_MAX_ATTEMPTS = 200;
-var LOCK_STALE_MS = 3e4;
-var DELIVERY_LOCK_MAX_ATTEMPTS = 3500;
-var DELIVERY_LOCK_STALE_MS = 3e4;
-var LOCK_INITIALIZATION_STALE_MS = 1e3;
 var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
+var receiptQueues = /* @__PURE__ */ new Map();
 function resolveReceiptPath(environment = process.env, homeDirectory = homedir3()) {
   const override = nonEmpty(environment.CODEX_HERALD_RECEIPTS);
   if (override !== void 0) {
@@ -16988,20 +16105,23 @@ async function readAcceptedKeys(receiptPath = resolveReceiptPath()) {
   });
 }
 function createReceiptRepository(receiptPath = resolveReceiptPath()) {
+  let acceptedKeys;
+  const loadAcceptedKeys = () => {
+    acceptedKeys ??= readAcceptedKeys(receiptPath);
+    return acceptedKeys;
+  };
   return {
     async hasAccepted(eventId, destination) {
-      return (await readAcceptedKeys(receiptPath)).has(
-        acceptedKey(eventId, destination)
-      );
+      return (await loadAcceptedKeys()).has(acceptedKey(eventId, destination));
     },
     async append(receipt) {
       await appendReceipt(receipt, receiptPath);
-    },
-    async withDeliveryLock(eventId, destination, action) {
-      return withDeliveryLock(receiptPath, eventId, destination, async () => {
-        const fresh = await readAcceptedKeys(receiptPath);
-        return action(fresh.has(acceptedKey(eventId, destination)));
-      });
+      if (acceptedKeys && receipt.status === "accepted" && receipt.destination) {
+        try {
+          (await acceptedKeys).add(acceptedKey(receipt.eventId, receipt.destination));
+        } catch {
+        }
+      }
     }
   };
 }
@@ -17040,7 +16160,7 @@ async function ensurePrivateDirectory(receiptPath) {
     throw new Error("Receipt path parent must be a regular directory");
   }
   if (created) {
-    await chmod2(directory, DIRECTORY_MODE2);
+    await chmod(directory, DIRECTORY_MODE2);
     return;
   }
   if ((information.mode & 511) !== DIRECTORY_MODE2) {
@@ -17127,149 +16247,20 @@ function parseAcceptedReceipt(line) {
   return { eventId: value.eventId, destination: value.destination };
 }
 async function withReceiptLock(receiptPath, action) {
-  return withLock(`${receiptPath}.lock`, action);
-}
-async function withDeliveryLock(receiptPath, eventId, destination, action) {
-  await ensurePrivateDirectory(receiptPath);
-  const digest = createHash2("sha256").update(acceptedKey(eventId, destination)).digest("hex");
-  const lockPath = `${receiptPath}.${digest}.delivery.lock`;
-  return withLock(lockPath, action, DELIVERY_LOCK_MAX_ATTEMPTS, DELIVERY_LOCK_STALE_MS);
-}
-async function withLock(lockPath, action, maxAttempts = LOCK_MAX_ATTEMPTS, staleMs = LOCK_STALE_MS) {
-  const lock = await acquireLock(lockPath, maxAttempts, staleMs);
+  const previous = receiptQueues.get(receiptPath) ?? Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  receiptQueues.set(receiptPath, tail);
+  await previous;
   try {
     return await action();
   } finally {
-    await lock.release();
-  }
-}
-async function acquireLock(lockPath, maxAttempts = LOCK_MAX_ATTEMPTS, staleMs = LOCK_STALE_MS) {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      await mkdir2(lockPath, { mode: DIRECTORY_MODE2 });
-    } catch (error51) {
-      if (!hasErrorCode(error51, "EEXIST")) {
-        throw error51;
-      }
-      await removeStaleLockDirectory(lockPath, staleMs);
-      await delay(LOCK_RETRY_MS);
-      continue;
-    }
-    await chmod2(lockPath, DIRECTORY_MODE2);
-    const ownerPath = join3(lockPath, `owner.${process.pid}.${randomUUID2()}`);
-    let handle;
-    try {
-      handle = await open3(
-        ownerPath,
-        constants3.O_CREAT | constants3.O_EXCL | constants3.O_WRONLY | NO_FOLLOW2,
-        FILE_MODE2
-      );
-      await handle.writeFile(`${process.pid}
-`, "utf8");
-      await handle.sync();
-      await handle.chmod(FILE_MODE2);
-      await handle.close();
-      handle = void 0;
-    } catch (error51) {
-      await handle?.close();
-      await unlinkIfPresent2(ownerPath);
-      await removeEmptyLockDirectory(lockPath);
-      if (hasErrorCode(error51, "ENOENT")) {
-        await delay(LOCK_RETRY_MS);
-        continue;
-      }
-      throw error51;
-    }
-    return {
-      async release() {
-        await unlinkIfPresent2(ownerPath);
-        await removeOwnedLockDirectory(lockPath);
-      }
-    };
-  }
-  throw new Error("Timed out waiting for the receipt store lock");
-}
-async function removeStaleLockDirectory(lockPath, staleMs) {
-  let information;
-  try {
-    information = await lstat3(lockPath);
-  } catch (error51) {
-    if (hasErrorCode(error51, "ENOENT")) {
-      return;
-    }
-    throw error51;
-  }
-  if (!information.isDirectory() || information.isSymbolicLink()) {
-    throw new Error("Receipt lock path must be a regular directory");
-  }
-  let entries;
-  try {
-    entries = await readdir(lockPath);
-  } catch (error51) {
-    if (hasErrorCode(error51, "ENOENT")) {
-      return;
-    }
-    throw error51;
-  }
-  if (entries.length === 0) {
-    if (Date.now() - information.mtimeMs > Math.min(staleMs, LOCK_INITIALIZATION_STALE_MS)) {
-      await removeEmptyLockDirectory(lockPath);
-    }
-    return;
-  }
-  for (const entry of entries) {
-    const ownerPath = join3(lockPath, entry);
-    const ownerPid = parseOwnerPid(entry);
-    if (ownerPid !== void 0) {
-      if (!isProcessAlive(ownerPid)) {
-        await unlinkIfPresent2(ownerPath);
-      }
-      continue;
-    }
-    try {
-      const ownerInformation = await lstat3(ownerPath);
-      if (Date.now() - ownerInformation.mtimeMs > staleMs) {
-        await unlinkIfPresent2(ownerPath);
-      }
-    } catch (error51) {
-      if (!hasErrorCode(error51, "ENOENT")) {
-        throw error51;
-      }
-    }
-  }
-  await removeEmptyLockDirectory(lockPath);
-}
-function parseOwnerPid(name) {
-  const match = /^owner\.(\d+)\.[0-9A-Za-z-]+$/u.exec(name);
-  if (!match?.[1]) {
-    return void 0;
-  }
-  const pid = Number.parseInt(match[1], 10);
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : void 0;
-}
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error51) {
-    return !hasErrorCode(error51, "ESRCH");
-  }
-}
-async function removeOwnedLockDirectory(path) {
-  try {
-    await rmdir(path);
-  } catch (error51) {
-    if (!hasErrorCode(error51, "ENOENT")) {
-      throw error51;
-    }
-  }
-}
-async function removeEmptyLockDirectory(path) {
-  try {
-    await rmdir(path);
-  } catch (error51) {
-    if (!hasErrorCode(error51, "ENOENT") && !hasErrorCode(error51, "ENOTEMPTY")) {
-      throw error51;
+    release?.();
+    if (receiptQueues.get(receiptPath) === tail) {
+      receiptQueues.delete(receiptPath);
     }
   }
 }
@@ -17291,224 +16282,43 @@ function isRecord(value) {
 function hasErrorCode(error51, code) {
   return typeof error51 === "object" && error51 !== null && "code" in error51 && error51.code === code;
 }
-async function delay(milliseconds) {
-  await new Promise((resolve2) => setTimeout(resolve2, milliseconds));
-}
 
-// src/system/process.ts
-import { spawn } from "node:child_process";
+// src/transports/imessage.ts
+import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, isAbsolute as isAbsolute3, join as join4, parse as parse4 } from "node:path";
-var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
-var SAFE_PROCESS_CWD = parse4(process.execPath).root;
-async function findExecutableOnPath(name, searchPath = process.env.PATH) {
-  if (!/^[0-9A-Za-z._-]+$/u.test(name) || !searchPath) {
-    return null;
-  }
-  for (const directory of searchPath.split(delimiter)) {
-    if (!directory || !isAbsolute3(directory)) {
-      continue;
-    }
-    try {
-      const resolvedDirectory = await realpath(directory);
-      const directoryMetadata = await stat(resolvedDirectory);
-      if (!isTrustedPathEntry(directoryMetadata, "directory")) {
-        continue;
-      }
-      const resolved = await realpath(join4(resolvedDirectory, name));
-      const metadata = await stat(resolved);
-      if (!isTrustedPathEntry(metadata, "file")) {
-        continue;
-      }
-      await access(resolved, fsConstants.X_OK);
-      return resolved;
-    } catch {
-    }
-  }
-  return null;
-}
-function isTrustedPathEntry(metadata, kind) {
-  if (kind === "directory" ? !metadata.isDirectory() : !metadata.isFile()) {
-    return false;
-  }
-  const currentUid = process.getuid?.();
-  if (currentUid !== void 0 && metadata.uid !== 0 && metadata.uid !== currentUid) {
-    return false;
-  }
-  if (process.platform === "win32") {
-    return true;
-  }
-  if ((metadata.mode & 2) !== 0) {
-    return false;
-  }
-  if ((metadata.mode & 16) === 0) {
-    return true;
-  }
-  return kind === "directory" && metadata.uid !== 0;
-}
-function runSafeProcess(executable, args, timeoutMs) {
-  return new Promise((resolve2) => {
-    if (!isAbsolute3(executable)) {
-      resolve2(emptyResult("failed"));
-      return;
-    }
-    let child;
-    try {
-      child = spawn(executable, [...args], {
-        cwd: SAFE_PROCESS_CWD,
-        env: safeChildEnvironment(),
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true
-      });
-    } catch (error51) {
-      resolve2(emptyResult(isEnoent(error51) ? "not_found" : "failed"));
-      return;
-    }
-    const stdout = captureStream(child.stdout);
-    const stderr = captureStream(child.stderr);
-    let settled = false;
-    let timer;
-    const finish = (kind, exitCode = null, signal = null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      resolve2({
-        kind,
-        exitCode,
-        signal,
-        stdout: stdout.text(),
-        stderr: stderr.text(),
-        stdoutTruncated: stdout.truncated(),
-        stderrTruncated: stderr.truncated()
-      });
-    };
-    child.once("error", (error51) => {
-      finish(isEnoent(error51) ? "not_found" : "failed");
-    });
-    child.once("close", (code, signal) => {
-      if (signal) {
-        finish("signaled", null, signal);
-      } else if (typeof code === "number") {
-        finish("exited", code);
-      } else {
-        finish("failed");
-      }
-    });
-    timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-      }
-      finish("timed_out");
-    }, timeoutMs);
-    timer.unref();
-  });
-}
-function captureStream(stream) {
-  const chunks = [];
-  let bytes = 0;
-  let wasTruncated = false;
-  stream?.on("data", (value) => {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    const remaining = MAX_PROCESS_OUTPUT_BYTES - bytes;
-    if (remaining > 0) {
-      const captured = chunk.subarray(0, remaining);
-      chunks.push(captured);
-      bytes += captured.byteLength;
-    }
-    if (chunk.byteLength > remaining) {
-      wasTruncated = true;
-    }
-  });
-  return {
-    text: () => Buffer.concat(chunks, bytes).toString("utf8"),
-    truncated: () => wasTruncated
-  };
-}
-function safeChildEnvironment() {
-  const environment = { PATH: "/usr/bin:/bin" };
-  for (const name of ["HOME", "LANG", "LC_ALL", "TMPDIR"]) {
-    const value = process.env[name];
-    if (value !== void 0) {
-      environment[name] = value;
-    }
-  }
-  return environment;
-}
-function emptyResult(kind) {
-  return {
-    kind,
-    exitCode: null,
-    signal: null,
-    stdout: "",
-    stderr: "",
-    stdoutTruncated: false,
-    stderrTruncated: false
-  };
-}
-function isEnoent(error51) {
-  return error51 instanceof Error && "code" in error51 && error51.code === "ENOENT";
-}
-
-// src/transports/imessage.ts
-var MAX_IMSG_VERSION_CHARS = 128;
 var INSPECTION_TIMEOUT_MS = 5e3;
-var REQUIRED_SEND_FLAGS = ["--to", "--text", "--service", "--json"];
+var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
+var MAX_VERSION_CHARS = 128;
+var SAFE_CWD = parse4(process.execPath).root;
 async function inspectIMessage(platform = process.platform) {
   if (platform !== "darwin") {
     return { ok: false, code: "driver_not_found" };
   }
-  const executable = await findExecutableOnPath("imsg");
+  const executable = await findImsg();
   if (!executable) {
     return { ok: false, code: "driver_not_found" };
   }
-  const versionResult = await runSafeProcess(
-    executable,
-    ["--version"],
-    INSPECTION_TIMEOUT_MS
-  );
-  const versionFailure = inspectionProcessFailure(versionResult);
-  if (versionFailure) {
-    return versionFailure;
+  const result = await runImsg(executable, ["--version"], INSPECTION_TIMEOUT_MS);
+  if (result.kind === "not_found") {
+    return { ok: false, code: "driver_not_found" };
   }
-  const version2 = boundedFirstLine(versionResult.stdout);
-  if (!version2 || versionResult.stdoutTruncated || versionResult.stderrTruncated) {
-    return { ok: false, code: "driver_invalid_response" };
+  if (result.kind !== "exited") {
+    return { ok: false, code: "driver_failed" };
   }
-  const helpResult = await runSafeProcess(
-    executable,
-    ["send", "--help"],
-    INSPECTION_TIMEOUT_MS
-  );
-  const helpFailure = inspectionProcessFailure(helpResult);
-  if (helpFailure) {
-    return helpFailure;
-  }
-  if (helpResult.stdoutTruncated || helpResult.stderrTruncated) {
-    return { ok: false, code: "driver_invalid_response" };
-  }
-  const help = `${helpResult.stdout}
-${helpResult.stderr}`;
-  if (!REQUIRED_SEND_FLAGS.every((flag) => help.includes(flag))) {
-    return { ok: false, code: "driver_invalid_response" };
-  }
-  return { ok: true, code: "ready", version: version2 };
+  const version2 = firstLine(result.stdout);
+  return version2 ? { ok: true, code: "ready", version: version2 } : { ok: false, code: "driver_invalid_response" };
 }
 async function sendIMessage(destination, _event, notification, platform = process.platform) {
   if (platform !== "darwin") {
     return { status: "failed", code: "driver_not_found" };
   }
-  const executable = await findExecutableOnPath("imsg");
+  const executable = await findImsg();
   if (!executable) {
     return { status: "failed", code: "driver_not_found" };
   }
-  const result = await runSafeProcess(
+  const result = await runImsg(
     executable,
     [
       "send",
@@ -17527,21 +16337,68 @@ async function sendIMessage(destination, _event, notification, platform = proces
       return { status: "failed", code: "driver_not_found" };
     case "timed_out":
       return { status: "failed", code: "driver_timeout" };
-    case "signaled":
+    case "terminated":
       return { status: "failed", code: "driver_terminated" };
     case "failed":
       return { status: "failed", code: "driver_failed" };
     case "exited":
-      if (result.exitCode !== 0) {
-        return { status: "failed", code: "driver_failed" };
-      }
-      return isAcceptedResponse(result.stdout, result.stdoutTruncated) ? { status: "accepted", code: "imsg_accepted" } : { status: "failed", code: "driver_invalid_response" };
+      return isAcceptedResponse(result.stdout) ? { status: "accepted", code: "imsg_accepted" } : { status: "failed", code: "driver_invalid_response" };
   }
 }
-function isAcceptedResponse(stdout, truncated) {
-  if (truncated) {
-    return false;
+async function findImsg(searchPath = process.env.PATH) {
+  if (!searchPath) {
+    return null;
   }
+  for (const directory of searchPath.split(delimiter)) {
+    if (!isAbsolute3(directory)) {
+      continue;
+    }
+    try {
+      const executable = await realpath(join4(directory, "imsg"));
+      if (!(await stat(executable)).isFile()) {
+        continue;
+      }
+      await access(executable, fsConstants.X_OK);
+      return executable;
+    } catch {
+    }
+  }
+  return null;
+}
+function runImsg(executable, args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile2(
+      executable,
+      [...args],
+      {
+        cwd: SAFE_CWD,
+        encoding: "utf8",
+        env: childEnvironment(),
+        killSignal: "SIGKILL",
+        maxBuffer: MAX_PROCESS_OUTPUT_BYTES,
+        shell: false,
+        timeout: timeoutMs,
+        windowsHide: true
+      },
+      (error51, stdout) => {
+        if (!error51) {
+          resolve({ kind: "exited", stdout });
+          return;
+        }
+        if (isErrorCode(error51, "ENOENT")) {
+          resolve({ kind: "not_found", stdout: "" });
+        } else if (error51.killed && error51.signal === "SIGKILL") {
+          resolve({ kind: "timed_out", stdout: "" });
+        } else if (error51.signal) {
+          resolve({ kind: "terminated", stdout: "" });
+        } else {
+          resolve({ kind: "failed", stdout: "" });
+        }
+      }
+    );
+  });
+}
+function isAcceptedResponse(stdout) {
   let value;
   try {
     value = JSON.parse(stdout.trim());
@@ -17550,37 +16407,26 @@ function isAcceptedResponse(stdout, truncated) {
   }
   return typeof value === "object" && value !== null && !Array.isArray(value) && "status" in value && value.status === "sent";
 }
-function inspectionProcessFailure(result) {
-  if (result.kind === "not_found") {
-    return { ok: false, code: "driver_not_found" };
-  }
-  if (result.kind !== "exited" || result.exitCode !== 0) {
-    return { ok: false, code: "driver_failed" };
-  }
-  return null;
+function firstLine(stdout) {
+  const value = stdout.split(/\r?\n/u, 1)[0] ?? "";
+  const cleaned = value.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  return Array.from(cleaned).slice(0, MAX_VERSION_CHARS).join("");
 }
-function boundedFirstLine(stdout) {
-  const firstLine = stdout.split(/\r?\n/u, 1)[0] ?? "";
-  const cleaned = firstLine.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
-  return Array.from(cleaned).slice(0, MAX_IMSG_VERSION_CHARS).join("");
+function childEnvironment() {
+  const environment = { PATH: "/usr/bin:/bin" };
+  for (const name of ["HOME", "LANG", "LC_ALL", "TMPDIR"]) {
+    const value = process.env[name];
+    if (value !== void 0) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+function isErrorCode(error51, code) {
+  return typeof error51 === "object" && error51 !== null && "code" in error51 && error51.code === code;
 }
 
 // src/transports/webhook.ts
-var import_ipaddr2 = __toESM(require_ipaddr(), 1);
-import { lookup as dnsLookup } from "node:dns/promises";
-import {
-  request as httpRequest
-} from "node:http";
-import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
-import { performance as performance2 } from "node:perf_hooks";
-var PRIVATE_RANGES = /* @__PURE__ */ new Set([
-  "private",
-  "loopback",
-  "linkLocal",
-  "uniqueLocal",
-  "carrierGradeNat"
-]);
 var BLOCKED_HEADERS = /* @__PURE__ */ new Set([
   "connection",
   "content-length",
@@ -17590,92 +16436,51 @@ var BLOCKED_HEADERS = /* @__PURE__ */ new Set([
   "x-codex-herald-event-id"
 ]);
 var HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-var PREPARATION_TIMEOUT = /* @__PURE__ */ Symbol("webhook preparation timeout");
+var DEADLINE_EXCEEDED = /* @__PURE__ */ Symbol("webhook deadline exceeded");
 async function sendWebhook(destination, event, notification, runtime) {
-  const deadline = performance2.now() + destination.timeoutMs;
-  const preparation = new AbortController();
-  const prepared = await completeBeforeDeadline(
-    prepareWebhook(destination, runtime, preparation.signal),
-    deadline,
-    () => preparation.abort()
-  );
-  if (prepared === PREPARATION_TIMEOUT) {
-    return { status: "failed", code: "webhook_timeout" };
-  }
-  if (!prepared.ok) {
-    return { status: "failed", code: prepared.code };
-  }
-  const body = JSON.stringify({
-    schema_version: 1,
-    destination: destination.id,
-    event: {
-      id: event.id,
-      type: event.type,
-      source: event.source,
-      source_event: event.sourceEvent,
-      occurred_at: event.occurredAt
-    },
-    notification: {
-      title: notification.title,
-      body: notification.body,
-      severity: notification.severity,
-      truncated: notification.truncated
+  const outcome = await completeBeforeDeadline(
+    destination.timeoutMs,
+    async (signal) => {
+      const prepared = await prepareWebhook(destination, runtime, signal);
+      if (!prepared.ok) {
+        return { status: "failed", code: prepared.code };
+      }
+      return postJson(
+        prepared.url,
+        JSON.stringify({
+          schema_version: 1,
+          destination: destination.id,
+          event: {
+            id: event.id,
+            type: event.type,
+            source: event.source,
+            source_event: event.sourceEvent,
+            occurred_at: event.occurredAt
+          },
+          notification: {
+            title: notification.title,
+            body: notification.body,
+            severity: notification.severity,
+            truncated: notification.truncated
+          }
+        }),
+        prepared.headers,
+        event.id,
+        signal
+      );
     }
-  });
-  return postJson(
-    prepared.url,
-    prepared.address,
-    body,
-    prepared.headers,
-    event.id,
-    Math.max(1, Math.ceil(deadline - performance2.now()))
   );
+  return outcome === DEADLINE_EXCEEDED ? { status: "failed", code: "webhook_timeout" } : outcome;
 }
 async function inspectWebhook(destination, runtime) {
-  const preparation = new AbortController();
-  const prepared = await completeBeforeDeadline(
-    prepareWebhook(destination, runtime, preparation.signal),
-    performance2.now() + destination.timeoutMs,
-    () => preparation.abort()
-  );
-  if (prepared === PREPARATION_TIMEOUT) {
-    return { ok: false, code: "webhook_timeout" };
-  }
-  return prepared.ok ? { ok: true, code: "ready" } : { ok: false, code: prepared.code };
-}
-function completeBeforeDeadline(operation, deadline, onTimeout) {
-  return new Promise((resolve2, reject) => {
-    const remainingMs = deadline - performance2.now();
-    if (remainingMs <= 0) {
-      onTimeout();
-      resolve2(PREPARATION_TIMEOUT);
-      return;
+  const inspection = await completeBeforeDeadline(
+    destination.timeoutMs,
+    async (signal) => {
+      const prepared = await prepareWebhook(destination, runtime, signal);
+      return prepared.ok ? { ok: true, code: "ready" } : { ok: false, code: prepared.code };
     }
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        onTimeout();
-        resolve2(PREPARATION_TIMEOUT);
-      }
-    }, Math.ceil(remainingMs));
-    operation.then(
-      (value) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve2(value);
-        }
-      },
-      (error51) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          reject(error51);
-        }
-      }
-    );
-  });
+  );
+  return inspection === DEADLINE_EXCEEDED ? { ok: false, code: "webhook_timeout" } : inspection;
 }
 async function prepareWebhook(destination, runtime, signal) {
   let rawUrl;
@@ -17684,39 +16489,16 @@ async function prepareWebhook(destination, runtime, signal) {
     rawUrl = await runtime.resolveValue(destination.url, signal);
     signal.throwIfAborted();
   } catch {
-    return { ok: false, code: "secret_unavailable" };
+    return failureCode(signal, "secret_unavailable");
   }
-  const url2 = parseAllowedUrl(rawUrl, destination);
+  const url2 = parseAllowedUrl(rawUrl, destination.allowInsecureHttp);
   if (!url2) {
     return { ok: false, code: "webhook_unsafe_url" };
   }
-  let addresses;
-  try {
-    addresses = await resolveAddresses(url2.hostname, runtime.lookup, signal);
-  } catch {
-    return { ok: false, code: "webhook_network_error" };
-  }
-  if (addresses.length === 0 || addresses.some(
-    ({ address }) => !isAllowedAddress(address, url2.protocol, destination.allowPrivateNetwork)
-  )) {
-    return { ok: false, code: "webhook_unsafe_url" };
-  }
-  const selectedAddress = addresses[0];
-  if (!selectedAddress) {
-    return { ok: false, code: "webhook_network_error" };
-  }
-  const headerResult = await resolveHeaders(destination, runtime, signal);
-  if (!headerResult.ok) {
-    return headerResult;
-  }
-  return {
-    ok: true,
-    url: url2,
-    address: selectedAddress,
-    headers: headerResult.headers
-  };
+  const headers = await resolveHeaders(destination, runtime, signal);
+  return headers.ok ? { ok: true, url: url2, headers: headers.value } : headers;
 }
-function parseAllowedUrl(rawUrl, destination) {
+function parseAllowedUrl(rawUrl, allowInsecureHttp) {
   let url2;
   try {
     url2 = new URL(rawUrl);
@@ -17729,42 +16511,7 @@ function parseAllowedUrl(rawUrl, destination) {
   if (url2.protocol === "https:") {
     return url2;
   }
-  if (url2.protocol === "http:" && destination.allowPrivateNetwork && destination.allowInsecureHttp) {
-    return url2;
-  }
-  return null;
-}
-async function resolveAddresses(rawHostname, lookupOverride, signal) {
-  signal?.throwIfAborted();
-  const hostname3 = stripIpv6Brackets(rawHostname);
-  const family = isIP(hostname3);
-  if (family === 4 || family === 6) {
-    return [{ address: hostname3, family }];
-  }
-  if (lookupOverride) {
-    const addresses2 = await lookupOverride(hostname3, signal);
-    signal?.throwIfAborted();
-    return addresses2;
-  }
-  const addresses = await dnsLookup(hostname3, { all: true, verbatim: true });
-  signal?.throwIfAborted();
-  return addresses;
-}
-function stripIpv6Brackets(hostname3) {
-  return hostname3.startsWith("[") && hostname3.endsWith("]") ? hostname3.slice(1, -1) : hostname3;
-}
-function isAllowedAddress(address, protocol, allowPrivateNetwork) {
-  let parsed;
-  try {
-    parsed = import_ipaddr2.default.process(address);
-  } catch {
-    return false;
-  }
-  const range = parsed.range();
-  if (protocol === "http:") {
-    return allowPrivateNetwork && PRIVATE_RANGES.has(range);
-  }
-  return range === "unicast" || allowPrivateNetwork && PRIVATE_RANGES.has(range);
+  return url2.protocol === "http:" && allowInsecureHttp ? url2 : null;
 }
 async function resolveHeaders(destination, runtime, signal) {
   const headers = {};
@@ -17782,30 +16529,16 @@ async function resolveHeaders(destination, runtime, signal) {
       headers[name] = value;
     }
   } catch {
-    return { ok: false, code: "secret_unavailable" };
+    return failureCode(signal, "secret_unavailable");
   }
-  return { ok: true, headers };
+  return { ok: true, value: headers };
 }
-function postJson(url2, address, body, customHeaders, eventId, timeoutMs) {
-  return new Promise((resolve2) => {
-    let settled = false;
-    let timedOut = false;
-    let timer;
-    const finish = (outcome) => {
-      if (!settled) {
-        settled = true;
-        if (timer) {
-          clearTimeout(timer);
-        }
-        resolve2(outcome);
-      }
-    };
-    const options = {
-      protocol: url2.protocol,
-      hostname: url2.hostname,
-      port: url2.port || void 0,
-      path: `${url2.pathname}${url2.search}`,
+async function postJson(url2, body, customHeaders, eventId, signal) {
+  try {
+    const response = await fetch(url2, {
       method: "POST",
+      redirect: "manual",
+      signal,
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body).toString(),
@@ -17813,41 +16546,39 @@ function postJson(url2, address, body, customHeaders, eventId, timeoutMs) {
         "x-codex-herald-event-id": eventId,
         ...customHeaders
       },
-      lookup: (_hostname, lookupOptions, callback) => {
-        if (lookupOptions.all) {
-          callback(null, [address]);
-        } else {
-          callback(null, address.address, address.family);
-        }
-      }
-    };
-    const request = url2.protocol === "https:" ? httpsRequest : httpRequest;
-    let outgoing;
-    try {
-      outgoing = request(options, (response) => {
-        const statusCode = response.statusCode ?? 0;
-        finish(
-          statusCode >= 200 && statusCode < 300 ? { status: "accepted", code: "webhook_accepted" } : { status: "failed", code: "webhook_http_error" }
-        );
-        response.destroy();
-      });
-    } catch {
-      finish({ status: "failed", code: "webhook_network_error" });
-      return;
-    }
-    outgoing.once("error", () => {
-      finish({
-        status: "failed",
-        code: timedOut ? "webhook_timeout" : "webhook_network_error"
-      });
+      body
     });
-    outgoing.end(body);
+    try {
+      await response.body?.cancel();
+    } catch {
+    }
+    return response.status >= 200 && response.status < 300 ? { status: "accepted", code: "webhook_accepted" } : { status: "failed", code: "webhook_http_error" };
+  } catch {
+    return {
+      status: "failed",
+      code: signal.aborted ? "webhook_timeout" : "webhook_network_error"
+    };
+  }
+}
+async function completeBeforeDeadline(timeoutMs, operation) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((resolve) => {
     timer = setTimeout(() => {
-      timedOut = true;
-      outgoing.destroy(new Error("webhook timeout"));
+      controller.abort();
+      resolve(DEADLINE_EXCEEDED);
     }, timeoutMs);
-    timer.unref();
   });
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+function failureCode(signal, fallback) {
+  return { ok: false, code: signal.aborted ? "webhook_timeout" : fallback };
 }
 
 // src/cli.ts
@@ -17906,7 +16637,7 @@ function createDefaultRuntime() {
     homeDir: homedir4(),
     stdin: process.stdin,
     now: () => /* @__PURE__ */ new Date(),
-    createId: randomUUID3,
+    createId: randomUUID2,
     sendWebhook: (destination, event, notification) => sendWebhook(destination, event, notification, webhookRuntime),
     sendIMessage,
     inspectWebhook: (destination) => inspectWebhook(destination, webhookRuntime),
@@ -18190,7 +16921,7 @@ var defaultIo = {
 `)
 };
 var entryPath = process.argv[1];
-if (entryPath && import.meta.url === pathToFileURL(resolve(entryPath)).href) {
+if (entryPath && import.meta.url === pathToFileURL(realpathSync(entryPath)).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
 export {

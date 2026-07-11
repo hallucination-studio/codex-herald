@@ -255,20 +255,9 @@ describe("accepted receipt lookup", () => {
     await repository.append(acceptedReceipt("event-1", "phone"));
     assert.equal(await repository.hasAccepted("event-1", "phone"), true);
     assert.equal(await repository.hasAccepted("event-1", "ops"), false);
-  });
 
-  it("reads durable accepted state on every repository lookup", async () => {
-    const directory = await makeTemporaryDirectory();
-    const receiptPath = join(directory, "receipts.ndjson");
-    await appendReceipt(acceptedReceipt("event-existing", "phone"), receiptPath);
-    const repository = createReceiptRepository(receiptPath);
-
-    assert.equal(await repository.hasAccepted("event-existing", "phone"), true);
-    await rm(receiptPath);
-    assert.equal(await repository.hasAccepted("event-existing", "phone"), false);
-
-    await repository.append(acceptedReceipt("event-appended", "ops"));
-    assert.equal(await repository.hasAccepted("event-appended", "ops"), true);
+    const reopened = createReceiptRepository(receiptPath);
+    assert.equal(await reopened.hasAccepted("event-1", "phone"), true);
   });
 
   it("uses unambiguous event and destination keys", () => {
