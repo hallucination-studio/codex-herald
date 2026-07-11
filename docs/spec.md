@@ -5,8 +5,8 @@
 Build **Codex Herald** (display name **Herald for Codex**) as a local-first Codex
 plugin and npm CLI that observes Codex `Stop` lifecycle facts, normalizes them as
 `turn.finished`, applies user-owned routing and privacy policy, delivers a
-channel-neutral notification to configured destinations, and records an honest
-delivery receipt.
+channel-neutral notification to configured destinations, and reports only the
+immediate result of each real-time send attempt.
 
 The product boundary is **Outbound Lifecycle Delivery**. It does not accept
 inbound commands, let the model select recipients, host user accounts, or claim
@@ -26,8 +26,8 @@ end-device delivery.
   `phone` destination, verifies that Messages has an enabled and connected
   iMessage account, and immediately sends one check notification only when the
   account is ready.
-- I can inspect `accepted`, `failed`, and `skipped` receipts without exposing
-  message bodies or secrets.
+- I can inspect the immediate `accepted` or `failed` result of an explicit test
+  without exposing message bodies or secrets.
 - Every lifecycle notification identifies Codex Herald, the source, the
   sanitized project basename, and the lifecycle event before any summary text.
 
@@ -40,9 +40,10 @@ continue the turn." Another matching Stop hook may request continuation, so a
 later Stop fact may occur for the same Codex turn.
 
 Herald derives a stable event id from the Codex session id, turn id, hook name,
-and a hash of the last assistant message. Before sending, Herald makes a
-best-effort check for any prior attempt receipt for the same event and
-destination. A recorded failure is not retried automatically.
+and a hash of the last assistant message for outbound event correlation. It does
+not persist or look up that id. Destination names are deduplicated within one
+invocation only. Repeated or overlapping Hook invocations can therefore make
+the same send again.
 
 ## Tech stack
 
@@ -84,8 +85,9 @@ codex-herald --version
 With `--imessage-recipient`, `setup` creates a single `phone` destination and
 route, then reuses the same delivery path as `test phone`. Plain `setup` remains
 side-effect free beyond writing the empty starter config. `ingest` is a
-non-interactive hook adapter. It reads one JSON object from stdin, writes
-nothing to stdout, and never asks for input.
+non-interactive hook adapter. It reads one JSON object from stdin and never asks
+for input. Successful routing writes nothing; a destination failure may produce
+one safe, length-bounded JSON `systemMessage` warning for Codex.
 
 iMessage readiness is enforced at the transport boundary for setup checks,
 explicit tests, doctor inspection, and Stop deliveries. Herald uses a fixed,
@@ -94,11 +96,12 @@ the imsg v0.12.3 send path selects. Herald sends only when that service is
 enabled and connected. It does not read account aliases, chats, or message
 bodies.
 
-Herald has no delivery queue or outbox. Each explicit setup check or destination
-test makes one real-time send attempt, has no automatic retry, and does not
-persist the notification body. The notification uses the same compact identity
-contract as a Stop delivery, but labels itself as `Source: Codex Herald`,
-`Project: Setup`, and `Event: Delivery check`.
+Herald has no delivery queue, outbox, automatic retry, receipt store, or other
+runtime delivery history. Each setup check, destination test, or Stop invocation
+makes at most one real-time send attempt per matched destination and does not
+persist notification content or delivery results. The setup notification uses
+the same compact identity contract as a Stop delivery, but labels itself as
+`Source: Codex Herald`, `Project: Setup`, and `Event: Delivery check`.
 
 ## Project structure
 
@@ -108,10 +111,9 @@ hooks/hooks.json            Bundled Stop hook
 bin/codex-herald            Plugin-local executable shim
 src/cli/                    CLI parsing and command handlers
 src/config/                 TOML loading, paths, schemas, secret references
-src/domain/                 Stable event, notification, destination, receipt types
+src/domain/                 Stable event, notification, destination, result types
 src/core/                   Normalization, privacy, routing, orchestration
 src/transports/             Webhook and imsg adapters
-src/observability/          Receipt persistence and structured diagnostics
 test/                       Unit and boundary integration tests
 docs/                       Product, security, and architectural decisions
 tasks/                      Implementation plan and checklist
@@ -173,7 +175,8 @@ max_chars = 500
 - Environment references use the exact form `$NAME`.
 - Keychain references use `keychain://<service>/<account>` and are resolved via
   macOS `/usr/bin/security` without a shell.
-- Resolved secrets are never included in output, receipts, or error messages.
+- Resolved secrets are never included in command output, Hook warnings, or error
+  messages.
 - Webhook URLs must use HTTPS unless `allow_insecure_http = true`. Userinfo in
   a literal URL is rejected.
 - Webhook header values, when configured, must be environment or Keychain
@@ -201,20 +204,13 @@ type Notification = {
   truncated: boolean;
 };
 
-type DeliveryStatus = "accepted" | "failed" | "skipped";
+type DeliveryOutcome =
+  | { status: "accepted"; code: AcceptedCode }
+  | { status: "failed"; code: FailedCode };
 
-type DeliveryReceipt = {
-  schemaVersion: 1;
-  eventId: string;
-  eventType: "turn.finished";
-  destination: string | null;
-  transport: "imessage" | "webhook" | null;
-  driver: "imsg" | "node-http" | null;
-  status: DeliveryStatus;
-  code: string;
-  recordedAt: string;
-  durationMs: number;
-};
+type DeliveryResult = {
+  destination: string;
+} & DeliveryOutcome;
 ```
 
 For iMessage, the compact text contract is:
@@ -234,9 +230,10 @@ working-directory path. `privacy.max_chars` applies only to the summary, not
 the identity header. Webhooks keep the same title and body in separate JSON
 fields.
 
-Receipt `code` is a bounded machine-readable value. Receipts never contain the
-notification body, webhook URL, headers, recipient, raw process output, or
-exception stack.
+`DeliveryResult` exists only in memory for the current invocation. Its `code` is
+a bounded machine-readable value; it contains no notification body, webhook
+URL, headers, recipient, raw process output, exception text, timestamp, or
+duration.
 
 ## Delivery behavior
 
@@ -251,20 +248,14 @@ exception stack.
 - Neither status means the person or device received/read the notification.
 - Readiness does not prove recipient reachability and never triggers an
   implicit fallback destination.
-- Timeouts are failures with uncertain remote state and are not retried
-  automatically, preventing duplicate messages.
-- A missing route produces a `skipped/no_matching_route` receipt.
-- A missing user configuration produces a `skipped/not_configured` receipt and
-  does not disrupt the Codex turn.
-- A previously attempted event/destination pair produces a
-  `skipped/duplicate_event` receipt.
-- Attempt receipt checks are best-effort. Overlapping Hook processes may race
-  and deliver a duplicate; MVP does not claim exactly-once delivery.
-- If attempt history cannot be read, Herald records `failed/internal_error`
-  without invoking the transport rather than risk an automatic retry.
-- Receipt persistence uses private directories/files and bounded NDJSON
-  rotation. It is best-effort for individual destination failures but a hook
-  input parse failure remains a fatal adapter error.
+- Timeouts are failures with uncertain remote state. Herald never retries
+  automatically; a manual or repeated Hook invocation may produce a duplicate.
+- A missing route or missing user configuration produces no send, output, or
+  runtime record and does not disrupt the Codex turn.
+- There is no cross-invocation deduplication. Repeated or overlapping Hook
+  invocations may send the same notification again.
+- Notification content and delivery results remain in process memory only and
+  are discarded when the invocation exits.
 
 ### Stop hook process contract
 
@@ -272,11 +263,17 @@ exception stack.
 - Herald requires only `session_id`, `turn_id`, `hook_event_name = "Stop"`, and
   `last_assistant_message`. It optionally allowlists `cwd` solely to derive a
   cleaned project basename. Unknown and unrelated Codex fields are ignored.
-- stdout is always empty.
-- Exit `0` after routing completes, even when one or more destinations fail;
-  those failures are represented by receipts.
-- Exit `1` only for malformed hook input or a local failure before Herald can
-  form a valid event/receipt.
+- Exit `0` after routing completes, including when one or more destinations
+  fail, so a notification failure cannot block or continue the Codex turn.
+- On full success, missing configuration, or no matching route, stdout and
+  stderr are empty.
+- On destination failure, stdout contains one JSON object with a safe,
+  length-bounded `systemMessage`; stderr remains empty. The warning identifies
+  only bounded destination ids and stable failure codes and excludes content,
+  recipients, URLs, secrets, local paths, raw output, and exception text.
+- Exit `1` only for malformed or oversized hook input, invalid configured
+  state, or another fatal local error. Fatal diagnostics are short, redacted,
+  and written to stderr with empty stdout.
 - Never exit `2`, return `decision: "block"`, or return `continue: false`, since
   those outputs would change Codex lifecycle behavior.
 - The packaged Stop command has a 60-second timeout, exceeding the bounded
@@ -284,16 +281,15 @@ exception stack.
   per adapter). iMessage readiness and send work share the same per-destination
   10-second deadline.
 
-## Observability questions
+## Immediate diagnostics
 
-The receipt stream must answer:
+Herald deliberately has no historical delivery query. Interactive commands may
+print a transient accepted/failed result. The Stop Hook uses Codex's
+`systemMessage` field only for a current destination failure, so the user gets a
+warning without changing turn continuation behavior.
 
-1. Which destination attempts were made for a specific lifecycle event?
-2. Which attempts were accepted, failed, or skipped, and with what bounded code?
-3. How long did each adapter take, without revealing content or credentials?
-
-Interactive diagnostics may print human-readable messages. Hook diagnostics are
-structured, concise, redacted, and written only to stderr on fatal errors.
+There is no audit trail, retry ledger, or post-hoc answer to which previous sends
+were attempted. This is an explicit privacy and simplicity trade-off in the MVP.
 
 ## Code style
 
@@ -304,7 +300,7 @@ export async function deliver(
   destination: Destination,
   notification: Notification,
   dependencies: DeliveryDependencies,
-): Promise<DeliveryReceipt> {
+): Promise<DeliveryOutcome> {
   switch (destination.transport) {
     case "webhook":
       return dependencies.sendWebhook(destination, notification);
@@ -322,11 +318,12 @@ export async function deliver(
 ## Testing strategy
 
 - Unit tests: schema validation, route expansion, privacy truncation, stable event
-  ids, secret parsing, URL policy, receipt redaction, duplicate detection.
+  ids, secret parsing, URL policy, and in-memory result semantics.
 - Boundary tests: webhook server on loopback; fake `imsg` executable; Keychain
-  process adapter; stdin size/JSON handling; receipt file permissions.
+  process adapter; stdin size/JSON handling; and proof that delivery attempts do
+  not create runtime state files.
 - CLI tests: plain setup, setup-and-check, `test`, `doctor`, and `ingest`
-  exit/stdout/stderr contracts.
+  exit/stdout/stderr contracts, including bounded `systemMessage` warnings.
 - Plugin validation: official `plugin-creator` validator plus JSON parsing.
 - CI gates: lint, typecheck, tests, build, plugin validation, and high-severity
   npm audit on pushes and pull requests.
@@ -340,30 +337,35 @@ replaced with localhost servers or executable fakes; no real messages are sent.
 
 - Validate all hook, config, environment, Keychain, process, and HTTP boundaries.
 - Keep recipient choice entirely in user configuration.
-- Keep stdout empty for `ingest`.
-- Preserve exact `accepted`/`failed`/`skipped` semantics.
+- Keep `ingest` stdout empty except for the documented destination-failure
+  `systemMessage` JSON.
+- Preserve exact `accepted`/`failed` semantics.
 - Run the full quality gate before handoff.
 
 ### Ask first
 
 - Add a transport, event, template, hosted component, or public adapter SDK.
 - Read project-local configuration or transcript content.
-- Add automatic retries, queues, or remote telemetry.
+- Add automatic retries, queues, runtime delivery storage, or remote telemetry.
 - Publish to npm or a Codex marketplace.
 
 ### Never
 
 - Let model output select a destination or become a shell command.
 - Read inbound messages or remotely control Codex.
-- Persist resolved secrets, notification bodies, prompts, or transcripts.
+- Persist delivery results, resolved secrets, notification bodies, prompts, or
+  transcripts.
 - Claim that a transport acceptance proves end-user delivery.
 
 ## Success criteria
 
 - A valid Codex Stop fixture routes to webhook and fake imsg destinations in
-  parallel and records one receipt per destination.
+  parallel and returns one in-memory result per destination.
 - One failing destination does not prevent another from being accepted.
-- `ingest` writes no stdout and never returns Codex continuation controls.
+- `ingest` emits a bounded `systemMessage` for destination failure and never
+  returns Codex continuation controls.
+- Repeating the same Hook fixture makes a fresh attempt and creates no runtime
+  delivery history.
 - Config is never loaded from the active repository.
 - `setup`, setup-and-check, `test`, and `doctor` work against an isolated
   temporary config.
@@ -375,5 +377,4 @@ replaced with localhost servers or executable fakes; no real messages are sent.
 
 - Email transport and provider-specific drivers
 - Rich templates and per-route privacy overrides
-- Receipt querying/retention commands
 - Managed enterprise hook deployment

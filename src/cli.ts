@@ -25,15 +25,10 @@ import { routeEvent } from "./core/router.js";
 import { HeraldError, isHeraldError } from "./domain/errors.js";
 import type {
   DeliveryDependencies,
-  DeliveryReceipt,
+  DeliveryResult,
   LifecycleEvent,
   WebhookDestination,
 } from "./domain/types.js";
-import {
-  appendReceipt,
-  createReceiptRepository,
-  resolveReceiptPath,
-} from "./observability/receipts.js";
 import {
   type IMessageInspection,
   inspectIMessage,
@@ -80,7 +75,6 @@ interface DoctorReport {
     status: "ready" | "error";
     code: string;
   };
-  receipts: { path: string };
   destinations: DoctorDestination[];
   issues: string[];
   warnings: string[];
@@ -130,7 +124,7 @@ export async function runCli(
       case "doctor":
         return await runDoctor(args, io, runtime);
       case "ingest":
-        return await runIngest(args, runtime);
+        return await runIngest(args, io, runtime);
       default:
         throw new CliUsageError(`Unknown command: ${command ?? ""}`);
     }
@@ -204,6 +198,7 @@ async function runSetup(
 
 async function runIngest(
   args: readonly string[],
+  io: CliIo,
   runtime: CliRuntime,
 ): Promise<number> {
   const { values } = parseArgs({
@@ -222,27 +217,25 @@ async function runIngest(
   const inputText = await readLimitedText(runtime.stdin, MAX_CODEX_STOP_INPUT_BYTES);
   const input = parseCodexStopText(inputText);
   const event = normalizeCodexStop(input, runtime.now());
-  const receiptPath = resolveReceiptPath(runtime.env, runtime.homeDir);
 
   let loaded: Awaited<ReturnType<typeof loadConfig>>;
   try {
     loaded = await loadConfig(configPathOptions(values.config, runtime));
   } catch (error) {
     if (isHeraldError(error) && error.code === "CONFIG_NOT_FOUND") {
-      await appendReceipt(notConfiguredReceipt(event, runtime.now()), receiptPath);
       return 0;
     }
     throw error;
   }
 
   const notification = applyPrivacy(event, loaded.config.privacy);
-  await routeEvent(
+  const results = await routeEvent(
     loaded.config,
     event,
     notification,
     deliveryDependencies(runtime),
-    createReceiptRepository(receiptPath),
   );
+  reportDeliveryFailures(results, io);
   return 0;
 }
 
@@ -309,36 +302,35 @@ async function testDestination(
       },
     ],
   };
-  const [receipt] = await routeEvent(
+  const [result] = await routeEvent(
     config,
     event,
     notification,
     deliveryDependencies(runtime),
-    createReceiptRepository(resolveReceiptPath(runtime.env, runtime.homeDir)),
   );
-  if (!receipt) {
-    throw new Error("Destination test produced no receipt");
+  if (!result) {
+    throw new Error("Destination test produced no result");
   }
 
   if (json) {
-    io.stdout(JSON.stringify(receipt));
+    io.stdout(JSON.stringify(result));
   } else {
-    io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
-    if (receipt.status === "accepted") {
+    io.stdout(`${destinationId}: ${result.status} (${result.code})`);
+    if (result.status === "accepted") {
       io.stdout(
         "accepted means the local transport accepted the request; it is not proof of delivery.",
       );
-    } else if (receipt.code === "imessage_not_ready") {
+    } else if (result.code === "imessage_not_ready") {
       io.stdout(
         "Open Messages > Settings > iMessage, sign in and enable the account, then retry.",
       );
-    } else if (receipt.code === "imessage_check_failed") {
+    } else if (result.code === "imessage_check_failed") {
       io.stdout(
         "Check that Messages is available and allow the app running Codex Herald to control it under System Settings > Privacy & Security > Automation, then retry.",
       );
     }
   }
-  return receipt.status === "accepted" ? 0 : 1;
+  return result.status === "accepted" ? 0 : 1;
 }
 
 function parseSetupRecipient(value: string | undefined): string | undefined {
@@ -369,7 +361,6 @@ async function runDoctor(
   const configOptions = configPathOptions(values.config, runtime);
   const path = resolveConfigPath(configOptions);
   const baseReport = {
-    receipts: { path: resolveReceiptPath(runtime.env, runtime.homeDir) },
     codex: {
       hookTrust: "manual_check" as const,
       instruction: "Run /hooks in Codex and trust the codex-herald Stop hook.",
@@ -470,13 +461,11 @@ function renderDoctor(report: DoctorReport, json: boolean, io: CliIo): void {
   for (const warning of report.warnings) {
     io.stdout(`Warning: ${warning}`);
   }
-  io.stdout(`Receipts: ${report.receipts.path}`);
   io.stdout(`Hook trust: ${report.codex.instruction}`);
 }
 
 function deliveryDependencies(runtime: CliRuntime): DeliveryDependencies {
   return {
-    now: runtime.now,
     sendWebhook: runtime.sendWebhook,
     sendIMessage: runtime.sendIMessage,
   };
@@ -493,22 +482,22 @@ function configPathOptions(
   };
 }
 
-function notConfiguredReceipt(
-  event: LifecycleEvent,
-  recordedAt: Date,
-): DeliveryReceipt {
-  return {
-    schemaVersion: 1,
-    eventId: event.id,
-    eventType: event.type,
-    destination: null,
-    transport: null,
-    driver: null,
-    status: "skipped",
-    code: "not_configured",
-    recordedAt: recordedAt.toISOString(),
-    durationMs: 0,
-  };
+function reportDeliveryFailures(results: readonly DeliveryResult[], io: CliIo): void {
+  const failures = results.filter((result) => result.status === "failed");
+  if (failures.length === 0) {
+    return;
+  }
+
+  const details = failures
+    .map(({ destination, code }) => `${destination.slice(0, 64)} (${code})`)
+    .join(", ");
+  io.stdout(
+    JSON.stringify({
+      systemMessage:
+        `Codex Herald delivery failed: ${details}. ` +
+        "No retry was attempted; run codex-herald doctor.",
+    }),
+  );
 }
 
 function formatError(error: unknown): string {

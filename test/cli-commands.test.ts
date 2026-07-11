@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { type CliIo, type CliRuntime, runCli } from "../src/cli.js";
 import { parseConfigText } from "../src/config/index.js";
-import type { DeliveryReceipt } from "../src/domain/types.js";
+import type { DeliveryResult } from "../src/domain/types.js";
 
 describe("CLI commands", () => {
   it("setup creates the selected user config", async () => {
@@ -33,7 +33,7 @@ describe("CLI commands", () => {
   it("setup configures an explicit iMessage recipient and sends a check", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
     const configPath = join(root, "config", "config.toml");
-    const receiptPath = join(root, "receipts.ndjson");
+    const legacyStoragePath = join(root, "receipts.ndjson");
     const recipient = "private-imessage@example.com";
     const output = captureIo();
     let sends = 0;
@@ -42,7 +42,7 @@ describe("CLI commands", () => {
       ["setup", "--config", configPath, "--imessage-recipient", recipient],
       output.io,
       runtime({
-        env: { CODEX_HERALD_RECEIPTS: receiptPath },
+        env: { CODEX_HERALD_RECEIPTS: legacyStoragePath },
         homeDir: root,
         sendIMessage: async (destination, _event, notification) => {
           sends += 1;
@@ -77,17 +77,13 @@ describe("CLI commands", () => {
         template: "compact",
       },
     ]);
-    const receiptText = await readFile(receiptPath, "utf8");
-    assert.doesNotMatch(receiptText, new RegExp(recipient, "u"));
-    const [receipt] = await readReceipts(receiptPath);
-    assert.equal(receipt?.status, "accepted");
-    assert.equal(receipt?.code, "imsg_accepted");
+    await assert.rejects(readFile(legacyStoragePath, "utf8"), { code: "ENOENT" });
   });
 
   it("setup keeps the configured destination when the automatic check fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
     const configPath = join(root, "config", "config.toml");
-    const receiptPath = join(root, "receipts.ndjson");
+    const legacyStoragePath = join(root, "receipts.ndjson");
     const recipient = "failed-check@example.com";
     const output = captureIo();
     let sends = 0;
@@ -96,7 +92,7 @@ describe("CLI commands", () => {
       ["setup", "--config", configPath, "--imessage-recipient", recipient],
       output.io,
       runtime({
-        env: { CODEX_HERALD_RECEIPTS: receiptPath },
+        env: { CODEX_HERALD_RECEIPTS: legacyStoragePath },
         homeDir: root,
         sendIMessage: async () => {
           sends += 1;
@@ -115,11 +111,7 @@ describe("CLI commands", () => {
     assert.equal(output.stderr.length, 0);
     const config = parseConfigText(await readFile(configPath, "utf8"));
     assert.equal(config.destinations.phone?.transport, "imessage");
-    const receiptText = await readFile(receiptPath, "utf8");
-    assert.doesNotMatch(receiptText, new RegExp(recipient, "u"));
-    const [receipt] = await readReceipts(receiptPath);
-    assert.equal(receipt?.status, "failed");
-    assert.equal(receipt?.code, "imessage_not_ready");
+    await assert.rejects(readFile(legacyStoragePath, "utf8"), { code: "ENOENT" });
   });
 
   it("setup rejects an empty iMessage recipient before creating a config", async () => {
@@ -139,7 +131,7 @@ describe("CLI commands", () => {
     await assert.rejects(readFile(configPath, "utf8"), { code: "ENOENT" });
   });
 
-  it("ingest isolates destination failure and keeps hook stdout empty", async () => {
+  it("ingest isolates destination failure and returns a Codex warning", async () => {
     const fixture = await configuredFixture(twoDestinationConfig());
     const output = captureIo();
 
@@ -162,39 +154,29 @@ describe("CLI commands", () => {
     );
 
     assert.equal(exitCode, 0);
-    assert.deepEqual(output.stdout, []);
+    assert.deepEqual(output.stdout, [
+      JSON.stringify({
+        systemMessage:
+          "Codex Herald delivery failed: ops (webhook_network_error). " +
+          "No retry was attempted; run codex-herald doctor.",
+      }),
+    ]);
     assert.deepEqual(output.stderr, []);
-    assert.deepEqual(
-      (await readReceipts(fixture.receiptPath))
-        .map(({ destination, status, code }) => ({ destination, status, code }))
-        .sort((left, right) =>
-          (left.destination ?? "").localeCompare(right.destination ?? ""),
-        ),
-      [
-        {
-          destination: "ops",
-          status: "failed",
-          code: "webhook_network_error",
-        },
-        {
-          destination: "phone",
-          status: "accepted",
-          code: "imsg_accepted",
-        },
-      ],
-    );
+    await assert.rejects(readFile(fixture.legacyStoragePath, "utf8"), {
+      code: "ENOENT",
+    });
   });
 
-  it("ingest records not_configured without disrupting Codex", async () => {
+  it("ingest ignores a missing config without writing state", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
-    const receiptPath = join(root, "receipts.ndjson");
+    const legacyStoragePath = join(root, "receipts.ndjson");
     const output = captureIo();
 
     const exitCode = await runCli(
       ["ingest", "--source", "codex-stop", "--config", join(root, "missing.toml")],
       output.io,
       runtime({
-        env: { CODEX_HERALD_RECEIPTS: receiptPath },
+        env: { CODEX_HERALD_RECEIPTS: legacyStoragePath },
         homeDir: root,
         stdin: chunks(JSON.stringify(validStopInput)),
       }),
@@ -203,12 +185,33 @@ describe("CLI commands", () => {
     assert.equal(exitCode, 0);
     assert.deepEqual(output.stdout, []);
     assert.deepEqual(output.stderr, []);
-    const receipts = await readReceipts(receiptPath);
-    assert.equal(receipts[0]?.status, "skipped");
-    assert.equal(receipts[0]?.code, "not_configured");
+    await assert.rejects(readFile(legacyStoragePath, "utf8"), { code: "ENOENT" });
   });
 
-  it("ingest records iMessage readiness failure without disrupting Codex", async () => {
+  it("ingest stays silent when every destination accepts the event", async () => {
+    const fixture = await configuredFixture(singleWebhookConfig());
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["ingest", "--source", "codex-stop", "--config", fixture.configPath],
+      output.io,
+      runtime({
+        env: fixture.env,
+        homeDir: fixture.root,
+        stdin: chunks(JSON.stringify(validStopInput)),
+        sendWebhook: async () => ({
+          status: "accepted",
+          code: "webhook_accepted",
+        }),
+      }),
+    );
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(output.stdout, []);
+    assert.deepEqual(output.stderr, []);
+  });
+
+  it("ingest reports iMessage readiness failure without writing state", async () => {
     const fixture = await configuredFixture(singleIMessageConfig());
     const output = captureIo();
 
@@ -227,11 +230,17 @@ describe("CLI commands", () => {
     );
 
     assert.equal(exitCode, 0);
-    assert.deepEqual(output.stdout, []);
+    assert.deepEqual(output.stdout, [
+      JSON.stringify({
+        systemMessage:
+          "Codex Herald delivery failed: phone (imessage_not_ready). " +
+          "No retry was attempted; run codex-herald doctor.",
+      }),
+    ]);
     assert.deepEqual(output.stderr, []);
-    const [receipt] = await readReceipts(fixture.receiptPath);
-    assert.equal(receipt?.status, "failed");
-    assert.equal(receipt?.code, "imessage_not_ready");
+    await assert.rejects(readFile(fixture.legacyStoragePath, "utf8"), {
+      code: "ENOENT",
+    });
   });
 
   it("ingest reports malformed input without echoing it", async () => {
@@ -291,7 +300,7 @@ describe("CLI commands", () => {
     }
   });
 
-  it("test emits an honest accepted receipt as JSON", async () => {
+  it("test emits an honest in-memory result as JSON", async () => {
     const fixture = await configuredFixture(singleWebhookConfig());
     const output = captureIo();
 
@@ -310,10 +319,12 @@ describe("CLI commands", () => {
 
     assert.equal(exitCode, 0);
     assert.equal(output.stderr.length, 0);
-    const receipt = JSON.parse(output.stdout.join("\n")) as DeliveryReceipt;
-    assert.equal(receipt.status, "accepted");
-    assert.equal(receipt.code, "webhook_accepted");
-    assert.equal("delivered" in receipt, false);
+    const result = JSON.parse(output.stdout.join("\n")) as DeliveryResult;
+    assert.equal(result.status, "accepted");
+    assert.equal(result.code, "webhook_accepted");
+    assert.equal("delivered" in result, false);
+    assert.equal("recordedAt" in result, false);
+    assert.equal("transport" in result, false);
   });
 
   it("doctor reports readiness without printing resolved secrets", async () => {
@@ -341,6 +352,7 @@ describe("CLI commands", () => {
       codex: { hookTrust: string };
     };
     assert.equal(report.ok, true);
+    assert.equal("receipts" in report, false);
     assert.deepEqual(report.destinations, [
       { id: "ops", transport: "webhook", status: "ready", code: "ready" },
     ]);
@@ -464,32 +476,23 @@ function captureIo(): {
 async function configuredFixture(config: string): Promise<{
   root: string;
   configPath: string;
-  receiptPath: string;
+  legacyStoragePath: string;
   env: NodeJS.ProcessEnv;
 }> {
   const root = await mkdtemp(join(tmpdir(), "codex-herald-cli-"));
   const configPath = join(root, "config.toml");
-  const receiptPath = join(root, "receipts.ndjson");
+  const legacyStoragePath = join(root, "receipts.ndjson");
   await writeFile(configPath, config, { mode: 0o600 });
   await chmod(root, 0o700);
   return {
     root,
     configPath,
-    receiptPath,
+    legacyStoragePath,
     env: {
-      CODEX_HERALD_RECEIPTS: receiptPath,
+      CODEX_HERALD_RECEIPTS: legacyStoragePath,
       OPS_WEBHOOK_URL: "https://hooks.example.com/from-env",
     },
   };
-}
-
-async function readReceipts(path: string): Promise<DeliveryReceipt[]> {
-  const text = await readFile(path, "utf8");
-  return text
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as DeliveryReceipt);
 }
 
 async function* chunks(value: string): AsyncGenerator<Buffer> {

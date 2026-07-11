@@ -6,8 +6,9 @@
 
 Codex Herald is a local-first, user-routed lifecycle delivery plugin and CLI
 for Codex. It observes Codex lifecycle facts, applies user-owned routing and
-privacy policy, sends outbound notifications to configured destinations, and
-records honest delivery receipts.
+privacy policy, and makes real-time outbound send attempts to configured
+destinations. It has no delivery queue, automatic retry, receipt store, or
+other runtime delivery history.
 
 The project, npm package, CLI, and plugin slug are all
 <code>codex-herald</code>. Version 0.1.0 is currently **unreleased**; use a
@@ -44,8 +45,6 @@ Template / Privacy policy
 Destination
     ↓
 Transport adapter
-    ↓
-Delivery receipt
 ~~~
 
 | Term | Meaning |
@@ -56,7 +55,6 @@ Delivery receipt
 | transport | A delivery type: <code>imessage</code> or <code>webhook</code> |
 | driver | A concrete implementation: <code>imsg</code> or <code>node-http</code> |
 | notification | Channel-neutral title, body, severity, and truncation state |
-| delivery receipt | A redacted <code>accepted</code>, <code>failed</code>, or <code>skipped</code> result |
 
 ## Requirements
 
@@ -151,16 +149,17 @@ iMessage account. If the account is not ready, Herald does not invoke
 and reports <code>imessage_not_ready</code>. If the account check itself cannot
 run, it reports <code>imessage_check_failed</code>; allow the app running Herald
 to control Messages under macOS Automation, then retry with
-<code>codex-herald test phone</code>. The recipient is not printed or stored in
-the receipt, although your shell may retain the command in its history.
+<code>codex-herald test phone</code>. The recipient is not printed and is stored
+only in the private user configuration, although your shell may retain the
+setup command in its history.
 
 Herald has no message queue or outbox. Each explicit setup check or
 <code>test</code> invocation makes at most one real-time send attempt, never
-retries it automatically, and never persists the notification body. If Messages
-was just re-enabled, Messages.app—not Herald—may release older outgoing items
-that macOS accepted previously. Wait for those items to finish, then run one
-check. Herald's live readiness guard prevents new sends while the selected
-iMessage service is disabled or disconnected.
+retries it automatically, and never persists the notification body or delivery
+result. If Messages was just re-enabled, Messages.app—not Herald—may release
+older outgoing items that macOS accepted previously. Wait for those items to
+finish, then run one check. Herald's live readiness guard prevents new sends
+while the selected iMessage service is disabled or disconnected.
 
 This uses npm's execution cache and does not require a global CLI install. The
 command creates the configuration directory with mode <code>0700</code> and
@@ -283,7 +282,8 @@ Supported secret references are exactly:
 - <code>keychain://&lt;service&gt;/&lt;account&gt;</code>, resolved on macOS
   through <code>/usr/bin/security</code> without a shell.
 
-Resolved secrets are not written to stdout, receipts, or error messages.
+Resolved secrets are not written to configuration, command output, delivery
+history, or error messages.
 Literal HTTPS webhook URLs are allowed only for endpoints that contain no
 credentials; <code>doctor</code> warns for every literal URL because tokens are
 often embedded in either a path or query. Prefer a secret reference for remote
@@ -327,8 +327,8 @@ Only enable HTTP for a destination you control and understand. See the
 | Command | Behavior |
 | --- | --- |
 | <code>codex-herald setup [--config PATH] [--force] [--imessage-recipient RECIPIENT]</code> | Create a safe starter config; an explicit iMessage recipient creates <code>phone</code> and immediately sends one check |
-| <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Check destination readiness, send one real test notification, and print its receipt |
-| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg and Messages account readiness, receipt path, and Hook trust guidance without sending a notification |
+| <code>codex-herald test DESTINATION [--config PATH] [--json]</code> | Check destination readiness, send one real test notification, and print the immediate result |
+| <code>codex-herald doctor [--config PATH] [--json]</code> | Inspect config, secret readiness, imsg and Messages account readiness, and Hook trust guidance without sending a notification |
 | <code>codex-herald ingest --source codex-stop [--config PATH]</code> | Non-interactive adapter used by the bundled Stop Hook |
 | <code>codex-herald --help</code> | Show CLI usage |
 | <code>codex-herald --version</code> | Show the package version |
@@ -342,14 +342,14 @@ codex-herald test ops --json
 ~~~
 
 <code>test</code> performs a real send. A test exits <code>0</code> only when
-the adapter reports <code>accepted</code>; it exits <code>1</code> for failed
-or skipped results. <code>doctor</code> exits <code>0</code> only when the
+the adapter reports <code>accepted</code>; it exits <code>1</code> for a failed
+result. <code>doctor</code> exits <code>0</code> only when the
 config, routes, and all configured destinations are ready. Interactive CLI
-argument errors exit <code>2</code>; every <code>ingest</code> error exits
-<code>1</code> so a usage failure can never become a Codex continuation signal.
-An iMessage readiness failure is reported locally and recorded as failed; it
-never triggers an implicit fallback destination and never blocks the Codex Stop
-Hook.
+argument errors exit <code>2</code>. Fatal <code>ingest</code> argument, input,
+configuration, and local errors exit <code>1</code>; destination failures remain
+non-blocking exit <code>0</code> warnings.
+An iMessage readiness failure is reported locally but not stored; it never
+triggers an implicit fallback destination and never blocks the Codex Stop Hook.
 
 ## Trust the bundled Stop Hook
 
@@ -378,10 +378,10 @@ continue.
 
 Codex launches matching command hooks concurrently. Another Stop Hook may ask
 Codex to continue the turn, which can lead to a later Stop event for the same
-turn. Herald derives a stable event id from the session id, turn id, Stop name,
-and last-assistant-message hash. Herald checks existing destination-attempt
-receipts before sending, so a recorded failure is not retried automatically.
-Overlapping Hook processes may still race and deliver a duplicate. A later
+turn. Herald derives a stable event id for the outbound event, but it does not
+store or look up that id. Destination names are deduplicated only within one
+invocation. There is no cross-invocation deduplication, so a repeated or
+overlapping Hook invocation may send the same notification again. A later
 continuation with different assistant text is a new lifecycle fact.
 
 Herald itself never returns <code>decision: "block"</code>,
@@ -410,55 +410,49 @@ so the product does not become a noisy general workflow engine. See the
 official [Codex Hooks documentation](https://developers.openai.com/codex/hooks)
 for the current event schemas.
 
-## Hook stdout and exit contract
+## Hook output and exit contract
 
-<code>ingest</code> reads one size-bounded JSON object from stdin and is silent
-on stdout.
+<code>ingest</code> reads one size-bounded JSON object from stdin. It does not
+ask for input and never writes notification content or secrets to its output.
 
 | Result | Exit | Observable behavior |
 | --- | ---: | --- |
-| Valid event, including one or more destination failures | 0 | Failures are represented by receipts; Codex lifecycle behavior is unchanged |
-| No user config | 0 | A <code>skipped/not_configured</code> receipt is recorded |
-| Malformed or oversized Hook input | 1 | A short redacted diagnostic may be written to stderr |
-| Fatal local failure before Herald can form a valid event/receipt | 1 | A short redacted diagnostic may be written to stderr |
+| Valid event and all matched sends accepted | 0 | stdout and stderr are empty |
+| One or more destination sends fail | 0 | stdout contains one safe, length-bounded JSON <code>systemMessage</code> warning; other destinations are still attempted |
+| No user config or no matching route | 0 | No send, output, or runtime record |
+| Malformed or oversized Hook input, invalid configured state, or another fatal local error | 1 | stdout is empty; stderr contains a short redacted diagnostic |
 
 The fixed packaged Hook arguments are valid, so CLI usage exit code
-<code>2</code> is not part of its normal Hook path.
+<code>2</code> is not part of its normal Hook path. Herald never uses
+<code>decision: "block"</code>, <code>continue: false</code>, or exit code
+<code>2</code> for a delivery failure. The warning contains only bounded,
+validated destination identifiers and stable failure codes; it excludes message
+content, recipients, URLs, secrets, local paths, raw process output, and
+exception text. This surfaces the failure without asking Codex to continue or
+blocking the completed turn.
 
-## Delivery receipts
+## Real-time delivery contract
 
-Every attempted, skipped, or failed route produces a redacted NDJSON receipt.
-Run <code>codex-herald doctor</code> to print the effective path.
+Herald keeps no delivery queue, outbox, automatic retry state, receipt file, or
+other runtime delivery history. Notification content and immediate adapter
+results exist only in process memory for the current invocation.
 
-Path precedence is:
+Each invocation makes at most one attempt per matched destination. Repeating a
+Hook, setup check, or <code>test</code> command creates a new attempt. Because
+there is no cross-invocation state, repeated or overlapping Hook invocations can
+produce duplicate notifications. Herald does not claim at-most-once or
+exactly-once delivery.
 
-1. absolute <code>CODEX_HERALD_RECEIPTS</code>;
-2. <code>$PLUGIN_DATA/receipts.ndjson</code> for a plugin-launched Hook;
-3. <code>$XDG_STATE_HOME/codex-herald/receipts.ndjson</code>; or
-4. <code>~/.local/state/codex-herald/receipts.ndjson</code>.
-
-Receipt directories and files are private, the active file rotates at 5 MiB,
-and the previous file is retained as <code>receipts.ndjson.1</code>. Receipts
-contain stable ids, destination names, adapter types, bounded result codes,
-timestamps, and durations. They never contain notification bodies, webhook
-URLs or headers, recipients, resolved secrets, raw process output, or exception
-stacks.
-
-Destination-attempt receipts are checked on a best-effort basis before sending.
-This avoids retrying both accepted and failed events during ordinary repeat
-invocations, but MVP does not claim exactly-once delivery across overlapping
-Hook processes. If the attempt history cannot be read, Herald fails closed and
-does not invoke the transport.
-
-Receipt statuses are intentionally conservative:
+Immediate results are intentionally conservative:
 
 - <code>accepted</code> for a webhook means Herald received HTTP 2xx.
 - <code>accepted</code> for imsg means the Messages account readiness check
   passed, then the process exited 0 and returned the expected
   <code>{"status":"sent"}</code> JSON shape.
 - Neither meaning proves end-device delivery or that a person read the message.
-- Timeouts are not retried automatically because the remote acceptance state
-  may be uncertain.
+- A timeout or interrupted process can have an uncertain acceptance state.
+  Herald does not retry automatically; manually repeating the command can
+  produce a duplicate.
 
 Destinations are isolated and run with bounded concurrency. One failure does
 not prevent another destination from being attempted.
@@ -478,7 +472,8 @@ For the MVP:
 - prompts and transcripts cannot be enabled;
 - summaries default to enabled and 500 Unicode characters;
 - destinations and recipients are fixed in user configuration;
-- secret values remain in memory and out of receipt storage; and
+- resolved secrets, notification content, and delivery results are not written
+  to runtime storage; and
 - inbound messages and remote control are outside the product boundary.
 
 Review the [MVP specification](docs/spec.md),

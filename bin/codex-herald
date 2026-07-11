@@ -8,7 +8,7 @@ var __export = (target, all) => {
 // src/cli.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { homedir as homedir4 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -15958,81 +15958,29 @@ function sanitizeSummary(value) {
 }
 
 // src/core/router.ts
-import { performance } from "node:perf_hooks";
 var DEFAULT_CONCURRENCY = 8;
-async function routeEvent(config2, event, notification, dependencies, receipts, concurrency = DEFAULT_CONCURRENCY) {
+async function routeEvent(config2, event, notification, dependencies, concurrency = DEFAULT_CONCURRENCY) {
   const destinationIds = matchingDestinations(config2, event);
-  if (destinationIds.length === 0) {
-    const receipt = createReceipt(
-      event,
-      null,
-      { status: "skipped", code: "no_matching_route" },
-      dependencies,
-      0
-    );
-    await receipts.append(receipt);
-    return [receipt];
-  }
   return mapWithConcurrency(destinationIds, concurrency, async (destinationId) => {
     const destination = config2.destinations[destinationId];
     if (!destination) {
-      const receipt2 = createReceipt(
-        event,
-        null,
-        { status: "failed", code: "config_invalid" },
-        dependencies,
-        0
-      );
-      await receipts.append(receipt2);
-      return receipt2;
+      return {
+        destination: destinationId,
+        status: "failed",
+        code: "config_invalid"
+      };
     }
-    const attempt = await lookupAttempt(receipts, event.id, destinationId);
-    if (attempt === "unavailable") {
-      const receipt2 = createReceipt(
-        event,
-        destination,
-        { status: "failed", code: "internal_error" },
-        dependencies,
-        0
-      );
-      await receipts.append(receipt2);
-      return receipt2;
-    }
-    if (attempt === "attempted") {
-      const receipt2 = createReceipt(
-        event,
-        destination,
-        { status: "skipped", code: "duplicate_event" },
-        dependencies,
-        0
-      );
-      await receipts.append(receipt2);
-      return receipt2;
-    }
-    const startedAt = performance.now();
     let outcome;
     try {
       outcome = await send(destination, event, notification, dependencies);
     } catch {
       outcome = { status: "failed", code: "internal_error" };
     }
-    const receipt = createReceipt(
-      event,
-      destination,
-      outcome,
-      dependencies,
-      performance.now() - startedAt
-    );
-    await receipts.append(receipt);
-    return receipt;
+    return {
+      destination: destination.id,
+      ...outcome
+    };
   });
-}
-async function lookupAttempt(receipts, eventId, destination) {
-  try {
-    return await receipts.hasAttempted(eventId, destination) ? "attempted" : "not_attempted";
-  } catch {
-    return "unavailable";
-  }
 }
 function matchingDestinations(config2, event) {
   const destinationIds = /* @__PURE__ */ new Set();
@@ -16053,25 +16001,6 @@ function send(destination, event, notification, dependencies) {
     case "imessage":
       return dependencies.sendIMessage(destination, event, notification);
   }
-}
-function createReceipt(event, destination, outcome, dependencies, durationMs) {
-  return {
-    schemaVersion: 1,
-    eventId: event.id,
-    eventType: event.type,
-    destination: destination?.id ?? null,
-    transport: destination?.transport ?? null,
-    driver: driverFor(destination),
-    ...outcome,
-    recordedAt: dependencies.now().toISOString(),
-    durationMs: Math.max(0, Math.round(durationMs))
-  };
-}
-function driverFor(destination) {
-  if (!destination) {
-    return null;
-  }
-  return destination.transport === "imessage" ? "imsg" : "node-http";
 }
 async function mapWithConcurrency(values, requestedConcurrency, operation) {
   const results = new Array(values.length);
@@ -16095,271 +16024,12 @@ async function mapWithConcurrency(values, requestedConcurrency, operation) {
   return results;
 }
 
-// src/observability/receipts.ts
-import { constants as constants3 } from "node:fs";
-import { chmod, lstat as lstat3, mkdir as mkdir2, open as open3, rename as rename2, unlink as unlink2 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3 } from "node:path";
-var RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
-var DIRECTORY_MODE2 = 448;
-var FILE_MODE2 = 384;
-var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
-var receiptWriteLocks = /* @__PURE__ */ new Map();
-function resolveReceiptPath(environment = process.env, homeDirectory = homedir3()) {
-  const override = nonEmpty(environment.CODEX_HERALD_RECEIPTS);
-  if (override !== void 0) {
-    return requireAbsolutePath(override, "CODEX_HERALD_RECEIPTS");
-  }
-  const pluginData = nonEmpty(environment.PLUGIN_DATA);
-  if (pluginData !== void 0) {
-    return join3(requireAbsolutePath(pluginData, "PLUGIN_DATA"), "receipts.ndjson");
-  }
-  const xdgState = nonEmpty(environment.XDG_STATE_HOME);
-  const stateDirectory = xdgState && isAbsolute2(xdgState) ? xdgState : join3(requireAbsolutePath(homeDirectory, "home directory"), ".local", "state");
-  return join3(stateDirectory, "codex-herald", "receipts.ndjson");
-}
-function requireAbsolutePath(value, name) {
-  if (!isAbsolute2(value)) {
-    throw new HeraldError("CONFIG_INVALID", `${name} must be an absolute path`);
-  }
-  return value;
-}
-function attemptKey(eventId, destination) {
-  return JSON.stringify([eventId, destination]);
-}
-async function appendReceipt(receipt, receiptPath = resolveReceiptPath()) {
-  const line = `${JSON.stringify(persistedReceipt(receipt))}
-`;
-  const lineBytes = Buffer.byteLength(line);
-  if (lineBytes > RECEIPT_MAX_BYTES) {
-    throw new RangeError("Receipt exceeds the maximum receipt file size");
-  }
-  await ensurePrivateDirectory(receiptPath);
-  await withReceiptLock(receiptPath, async () => {
-    const currentSize = await privateRegularFileSize(receiptPath);
-    if (currentSize + lineBytes > RECEIPT_MAX_BYTES) {
-      await rotateReceiptFile(receiptPath);
-    }
-    const handle = await open3(
-      receiptPath,
-      constants3.O_APPEND | constants3.O_CREAT | constants3.O_WRONLY | NO_FOLLOW2,
-      FILE_MODE2
-    );
-    try {
-      const information = await handle.stat();
-      if (!information.isFile()) {
-        throw new Error("Receipt path is not a regular file");
-      }
-      await handle.chmod(FILE_MODE2);
-      await handle.writeFile(line, "utf8");
-    } finally {
-      await handle.close();
-    }
-  });
-}
-async function readAttemptedKeys(receiptPath = resolveReceiptPath()) {
-  await ensurePrivateDirectory(receiptPath);
-  return withReceiptLock(receiptPath, async () => {
-    const keys = /* @__PURE__ */ new Set();
-    for (const path of [`${receiptPath}.1`, receiptPath]) {
-      const contents = await readPrivateFile(path);
-      if (contents === void 0) {
-        continue;
-      }
-      for (const line of contents.split("\n")) {
-        const attempt = parseAttemptedReceipt(line);
-        if (attempt !== void 0) {
-          keys.add(attemptKey(attempt.eventId, attempt.destination));
-        }
-      }
-    }
-    return keys;
-  });
-}
-function createReceiptRepository(receiptPath = resolveReceiptPath()) {
-  let attemptedKeys;
-  const loadAttemptedKeys = () => {
-    attemptedKeys ??= readAttemptedKeys(receiptPath);
-    return attemptedKeys;
-  };
-  return {
-    async hasAttempted(eventId, destination) {
-      return (await loadAttemptedKeys()).has(attemptKey(eventId, destination));
-    },
-    async append(receipt) {
-      await appendReceipt(receipt, receiptPath);
-      if (attemptedKeys && receipt.destination) {
-        try {
-          (await attemptedKeys).add(attemptKey(receipt.eventId, receipt.destination));
-        } catch {
-        }
-      }
-    }
-  };
-}
-function persistedReceipt(receipt) {
-  const base = {
-    schemaVersion: receipt.schemaVersion,
-    eventId: receipt.eventId,
-    eventType: receipt.eventType,
-    destination: receipt.destination,
-    transport: receipt.transport,
-    driver: receipt.driver,
-    recordedAt: receipt.recordedAt,
-    durationMs: receipt.durationMs
-  };
-  switch (receipt.status) {
-    case "accepted":
-      return { ...base, status: receipt.status, code: receipt.code };
-    case "failed":
-      return { ...base, status: receipt.status, code: receipt.code };
-    case "skipped":
-      return { ...base, status: receipt.status, code: receipt.code };
-  }
-}
-async function ensurePrivateDirectory(receiptPath) {
-  const directory = dirname2(receiptPath);
-  let created = false;
-  try {
-    created = await mkdir2(directory, { recursive: true, mode: DIRECTORY_MODE2 }) !== void 0;
-  } catch (error51) {
-    if (!hasErrorCode(error51, "EEXIST")) {
-      throw error51;
-    }
-  }
-  const information = await lstat3(directory);
-  if (!information.isDirectory() || information.isSymbolicLink()) {
-    throw new Error("Receipt path parent must be a regular directory");
-  }
-  if (created) {
-    await chmod(directory, DIRECTORY_MODE2);
-    return;
-  }
-  if ((information.mode & 511) !== DIRECTORY_MODE2) {
-    throw new Error("Existing receipt directory must be private with mode 0700");
-  }
-}
-async function privateRegularFileSize(path) {
-  let information;
-  try {
-    information = await lstat3(path);
-  } catch (error51) {
-    if (hasErrorCode(error51, "ENOENT")) {
-      return 0;
-    }
-    throw error51;
-  }
-  if (!information.isFile() || information.isSymbolicLink()) {
-    throw new Error("Receipt path is not a regular file");
-  }
-  const handle = await open3(path, constants3.O_RDONLY | NO_FOLLOW2);
-  try {
-    await handle.chmod(FILE_MODE2);
-    return (await handle.stat()).size;
-  } finally {
-    await handle.close();
-  }
-}
-async function rotateReceiptFile(receiptPath) {
-  const rotatedPath = `${receiptPath}.1`;
-  try {
-    await rename2(receiptPath, rotatedPath);
-  } catch (error51) {
-    if (hasErrorCode(error51, "ENOENT")) {
-      return;
-    }
-    if (!hasErrorCode(error51, "EEXIST") && !hasErrorCode(error51, "EPERM")) {
-      throw error51;
-    }
-    await unlinkIfPresent2(rotatedPath);
-    await rename2(receiptPath, rotatedPath);
-  }
-}
-async function readPrivateFile(path) {
-  let information;
-  try {
-    information = await lstat3(path);
-  } catch (error51) {
-    if (hasErrorCode(error51, "ENOENT")) {
-      return void 0;
-    }
-    throw error51;
-  }
-  if (!information.isFile() || information.isSymbolicLink()) {
-    throw new Error("Receipt history path must be a regular file");
-  }
-  const handle = await open3(path, constants3.O_RDONLY | NO_FOLLOW2);
-  try {
-    return await handle.readFile("utf8");
-  } finally {
-    await handle.close();
-  }
-}
-function parseAttemptedReceipt(line) {
-  if (line.trim() === "") {
-    return void 0;
-  }
-  let value;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    return void 0;
-  }
-  if (!isRecord(value)) {
-    return void 0;
-  }
-  if (value.schemaVersion !== 1 || value.eventType !== "turn.finished" || value.status !== "accepted" && value.status !== "failed" && value.status !== "skipped" || typeof value.eventId !== "string" || value.eventId.length === 0 || typeof value.destination !== "string" || value.destination.length === 0 || typeof value.code !== "string" || value.code.length === 0) {
-    return void 0;
-  }
-  const validAdapter = value.transport === "webhook" && value.driver === "node-http" || value.transport === "imessage" && value.driver === "imsg";
-  if (!validAdapter) {
-    return void 0;
-  }
-  return { eventId: value.eventId, destination: value.destination };
-}
-async function withReceiptLock(receiptPath, action) {
-  const previous = receiptWriteLocks.get(receiptPath) ?? Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(() => current);
-  receiptWriteLocks.set(receiptPath, tail);
-  await previous;
-  try {
-    return await action();
-  } finally {
-    release?.();
-    if (receiptWriteLocks.get(receiptPath) === tail) {
-      receiptWriteLocks.delete(receiptPath);
-    }
-  }
-}
-async function unlinkIfPresent2(path) {
-  try {
-    await unlink2(path);
-  } catch (error51) {
-    if (!hasErrorCode(error51, "ENOENT")) {
-      throw error51;
-    }
-  }
-}
-function nonEmpty(value) {
-  return value === void 0 || value.length === 0 ? void 0 : value;
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasErrorCode(error51, code) {
-  return typeof error51 === "object" && error51 !== null && "code" in error51 && error51.code === code;
-}
-
 // src/transports/imessage.ts
 import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute as isAbsolute3, join as join4, parse as parse4 } from "node:path";
-import { performance as performance2 } from "node:perf_hooks";
+import { delimiter, isAbsolute as isAbsolute2, join as join3, parse as parse4 } from "node:path";
+import { performance } from "node:perf_hooks";
 var INSPECTION_TIMEOUT_MS = 5e3;
 var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024;
 var MAX_VERSION_CHARS = 128;
@@ -16433,7 +16103,7 @@ async function sendIMessage(destination, _event, notification, platform = proces
   if (!executable) {
     return { status: "failed", code: "driver_not_found" };
   }
-  const startedAt = performance2.now();
+  const startedAt = performance.now();
   const readiness = await checkReadiness(
     platform,
     Math.min(INSPECTION_TIMEOUT_MS, destination.timeoutMs)
@@ -16442,7 +16112,7 @@ async function sendIMessage(destination, _event, notification, platform = proces
     return { status: "failed", code: readiness.code };
   }
   const remainingTimeoutMs = Math.floor(
-    destination.timeoutMs - (performance2.now() - startedAt)
+    destination.timeoutMs - (performance.now() - startedAt)
   );
   if (remainingTimeoutMs <= 0) {
     return { status: "failed", code: "driver_timeout" };
@@ -16480,11 +16150,11 @@ async function findImsg(searchPath = process.env.PATH) {
     return null;
   }
   for (const directory of searchPath.split(delimiter)) {
-    if (!isAbsolute3(directory)) {
+    if (!isAbsolute2(directory)) {
       continue;
     }
     try {
-      const executable = await realpath(join4(directory, "imsg"));
+      const executable = await realpath(join3(directory, "imsg"));
       if (!(await stat(executable)).isFile()) {
         continue;
       }
@@ -16742,7 +16412,7 @@ async function runCli(argv, io = defaultIo, runtime = createDefaultRuntime()) {
       case "doctor":
         return await runDoctor(args, io, runtime);
       case "ingest":
-        return await runIngest(args, runtime);
+        return await runIngest(args, io, runtime);
       default:
         throw new CliUsageError(`Unknown command: ${command ?? ""}`);
     }
@@ -16763,7 +16433,7 @@ function createDefaultRuntime() {
   };
   return {
     env: process.env,
-    homeDir: homedir4(),
+    homeDir: homedir3(),
     stdin: process.stdin,
     now: () => /* @__PURE__ */ new Date(),
     createId: randomUUID2,
@@ -16803,7 +16473,7 @@ async function runSetup(args, io, runtime) {
   io.stdout("Edit destinations and routes, then run codex-herald doctor.");
   return 0;
 }
-async function runIngest(args, runtime) {
+async function runIngest(args, io, runtime) {
   const { values } = parseArgs({
     args,
     allowPositionals: false,
@@ -16819,25 +16489,23 @@ async function runIngest(args, runtime) {
   const inputText = await readLimitedText(runtime.stdin, MAX_CODEX_STOP_INPUT_BYTES);
   const input = parseCodexStopText(inputText);
   const event = normalizeCodexStop(input, runtime.now());
-  const receiptPath = resolveReceiptPath(runtime.env, runtime.homeDir);
   let loaded;
   try {
     loaded = await loadConfig(configPathOptions(values.config, runtime));
   } catch (error51) {
     if (isHeraldError(error51) && error51.code === "CONFIG_NOT_FOUND") {
-      await appendReceipt(notConfiguredReceipt(event, runtime.now()), receiptPath);
       return 0;
     }
     throw error51;
   }
   const notification = applyPrivacy(event, loaded.config.privacy);
-  await routeEvent(
+  const results = await routeEvent(
     loaded.config,
     event,
     notification,
-    deliveryDependencies(runtime),
-    createReceiptRepository(receiptPath)
+    deliveryDependencies(runtime)
   );
+  reportDeliveryFailures(results, io);
   return 0;
 }
 async function runDestinationTest(args, io, runtime) {
@@ -16890,35 +16558,34 @@ async function testDestination(destinationId, configOptions, json2, io, runtime)
       }
     ]
   };
-  const [receipt] = await routeEvent(
+  const [result] = await routeEvent(
     config2,
     event,
     notification,
-    deliveryDependencies(runtime),
-    createReceiptRepository(resolveReceiptPath(runtime.env, runtime.homeDir))
+    deliveryDependencies(runtime)
   );
-  if (!receipt) {
-    throw new Error("Destination test produced no receipt");
+  if (!result) {
+    throw new Error("Destination test produced no result");
   }
   if (json2) {
-    io.stdout(JSON.stringify(receipt));
+    io.stdout(JSON.stringify(result));
   } else {
-    io.stdout(`${destinationId}: ${receipt.status} (${receipt.code})`);
-    if (receipt.status === "accepted") {
+    io.stdout(`${destinationId}: ${result.status} (${result.code})`);
+    if (result.status === "accepted") {
       io.stdout(
         "accepted means the local transport accepted the request; it is not proof of delivery."
       );
-    } else if (receipt.code === "imessage_not_ready") {
+    } else if (result.code === "imessage_not_ready") {
       io.stdout(
         "Open Messages > Settings > iMessage, sign in and enable the account, then retry."
       );
-    } else if (receipt.code === "imessage_check_failed") {
+    } else if (result.code === "imessage_check_failed") {
       io.stdout(
         "Check that Messages is available and allow the app running Codex Herald to control it under System Settings > Privacy & Security > Automation, then retry."
       );
     }
   }
-  return receipt.status === "accepted" ? 0 : 1;
+  return result.status === "accepted" ? 0 : 1;
 }
 function parseSetupRecipient(value) {
   if (value === void 0) {
@@ -16943,7 +16610,6 @@ async function runDoctor(args, io, runtime) {
   const configOptions = configPathOptions(values.config, runtime);
   const path = resolveConfigPath(configOptions);
   const baseReport = {
-    receipts: { path: resolveReceiptPath(runtime.env, runtime.homeDir) },
     codex: {
       hookTrust: "manual_check",
       instruction: "Run /hooks in Codex and trust the codex-herald Stop hook."
@@ -17033,12 +16699,10 @@ function renderDoctor(report, json2, io) {
   for (const warning of report.warnings) {
     io.stdout(`Warning: ${warning}`);
   }
-  io.stdout(`Receipts: ${report.receipts.path}`);
   io.stdout(`Hook trust: ${report.codex.instruction}`);
 }
 function deliveryDependencies(runtime) {
   return {
-    now: runtime.now,
     sendWebhook: runtime.sendWebhook,
     sendIMessage: runtime.sendIMessage
   };
@@ -17050,19 +16714,17 @@ function configPathOptions(explicitPath, runtime) {
     homeDir: runtime.homeDir
   };
 }
-function notConfiguredReceipt(event, recordedAt) {
-  return {
-    schemaVersion: 1,
-    eventId: event.id,
-    eventType: event.type,
-    destination: null,
-    transport: null,
-    driver: null,
-    status: "skipped",
-    code: "not_configured",
-    recordedAt: recordedAt.toISOString(),
-    durationMs: 0
-  };
+function reportDeliveryFailures(results, io) {
+  const failures = results.filter((result) => result.status === "failed");
+  if (failures.length === 0) {
+    return;
+  }
+  const details = failures.map(({ destination, code }) => `${destination.slice(0, 64)} (${code})`).join(", ");
+  io.stdout(
+    JSON.stringify({
+      systemMessage: `Codex Herald delivery failed: ${details}. No retry was attempted; run codex-herald doctor.`
+    })
+  );
 }
 function formatError2(error51) {
   if (isHeraldError(error51)) {

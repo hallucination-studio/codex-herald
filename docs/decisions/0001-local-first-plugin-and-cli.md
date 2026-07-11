@@ -24,11 +24,22 @@ Ship one repository as:
 
 1. A Codex plugin with `.codex-plugin/plugin.json` and `hooks/hooks.json`.
 2. A self-contained Node CLI bundle invoked through a plugin-local executable.
-3. A user-level TOML configuration and private local NDJSON receipt store.
+3. A user-level TOML configuration and stateless, real-time delivery engine.
 
 The bundled hook observes official Codex `Stop` input and normalizes it to the
 Herald route name `turn.finished`. It uses `last_assistant_message` only and
 never parses `transcript_path`.
+
+Herald keeps no delivery queue, outbox, automatic retry, receipt file, or other
+runtime delivery history. It deduplicates destination names only within one
+invocation. A repeated or overlapping Hook invocation may therefore send the
+same notification again.
+
+A destination failure does not change Codex turn continuation. The Stop Hook
+exits `0` and may surface one safe, length-bounded `systemMessage` warning.
+Malformed input, invalid configured state, or another fatal local error may
+exit `1` with a redacted diagnostic. Herald never uses exit `2`,
+`decision: "block"`, or `continue: false` for delivery reporting.
 
 Configuration lookup is explicit/user-level. The active repository and current
 working directory are never searched for Herald config.
@@ -38,10 +49,18 @@ working directory are never searched for Herald config.
 ### Use Codex `notify` only
 
 - Pros: small integration surface.
-- Cons: project-scoped config cannot set `notify`, plugin packaging and lifecycle
-  receipts are weaker, and the current official hook API exposes the precise
-  Stop fields Herald needs.
+- Cons: project-scoped config cannot set `notify`, plugin packaging is weaker,
+  and the current official hook API exposes the precise Stop fields Herald
+  needs.
 - Rejected: lifecycle hooks are the current supported extension point.
+
+### Persist receipts or a deduplication outbox
+
+- Pros: historical inspection and best-effort suppression of repeated events.
+- Cons: creates sensitive runtime state, retention and locking policy, migration
+  work, and a false impression of exactly-once delivery without eliminating
+  races or uncertain transport timeouts.
+- Rejected: the MVP favors a smaller privacy surface and immediate diagnostics.
 
 ### Require a globally installed `codex-herald`
 
@@ -67,7 +86,7 @@ working directory are never searched for Herald config.
 
 ### Hosted notification service
 
-- Pros: easier cross-device setup and centralized receipts.
+- Pros: easier cross-device setup and centralized delivery history.
 - Cons: requires accounts, credential custody, data retention, and a cloud
   control plane outside the stated boundary.
 - Rejected: the product is local-first and outbound-only.
@@ -80,3 +99,7 @@ working directory are never searched for Herald config.
   not proof that no hook continued the turn.
 - User-level config is slightly less convenient than repo-local config but
   blocks a high-impact exfiltration path.
+- There is no post-hoc delivery history or cross-invocation deduplication.
+  Repeated Hook execution can produce duplicate notifications.
+- Delivery failures are visible only through the current CLI result or Codex
+  `systemMessage`; operators use `doctor` for follow-up diagnosis.

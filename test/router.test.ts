@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type ReceiptRepository, routeEvent } from "../src/core/router.js";
+import { routeEvent } from "../src/core/router.js";
 import type {
   DeliveryDependencies,
-  DeliveryReceipt,
   HeraldConfig,
   LifecycleEvent,
   Notification,
@@ -20,42 +19,27 @@ const event: LifecycleEvent = {
 };
 
 const notification: Notification = {
-  title: "Codex turn finished",
+  title: "Codex Herald",
   body: "Done",
   severity: "info",
   truncated: false,
 };
 
 describe("routeEvent", () => {
-  it("records a skipped receipt when no route matches", async () => {
-    const store = new MemoryReceipts();
-
-    const receipts = await routeEvent(
+  it("returns no result when no route matches", async () => {
+    const results = await routeEvent(
       configWithRoutes([]),
       event,
       notification,
       dependencies(),
-      store,
     );
 
-    assert.equal(receipts.length, 1);
-    assert.equal(receipts[0]?.status, "skipped");
-    assert.equal(receipts[0]?.code, "no_matching_route");
-    assert.equal(receipts[0]?.destination, null);
-    assert.deepEqual(store.items, receipts);
+    assert.deepEqual(results, []);
   });
 
   it("deduplicates destinations selected by overlapping routes", async () => {
     let sends = 0;
-    const store = new MemoryReceipts();
-    const deps = dependencies({
-      sendWebhook: async () => {
-        sends += 1;
-        return { status: "accepted", code: "webhook_accepted" };
-      },
-    });
-
-    const receipts = await routeEvent(
+    const results = await routeEvent(
       configWithRoutes([
         {
           events: ["turn.finished"],
@@ -70,38 +54,43 @@ describe("routeEvent", () => {
       ]),
       event,
       notification,
-      deps,
-      store,
+      dependencies({
+        sendWebhook: async () => {
+          sends += 1;
+          return { status: "accepted", code: "webhook_accepted" };
+        },
+      }),
     );
 
     assert.equal(sends, 1);
-    assert.equal(receipts.length, 1);
-    assert.equal(receipts[0]?.status, "accepted");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.status, "accepted");
   });
 
   it("isolates a failing destination from a successful destination", async () => {
-    const store = new MemoryReceipts();
-    const config = configWithRoutes([
-      {
-        events: ["turn.finished"],
-        destinations: ["ops", "phone"],
-        template: "compact",
-      },
-    ]);
-    const deps = dependencies({
-      sendWebhook: async () => {
-        throw new Error("canary secret must not escape");
-      },
-      sendIMessage: async () => ({
-        status: "accepted",
-        code: "imsg_accepted",
+    const results = await routeEvent(
+      configWithRoutes([
+        {
+          events: ["turn.finished"],
+          destinations: ["ops", "phone"],
+          template: "compact",
+        },
+      ]),
+      event,
+      notification,
+      dependencies({
+        sendWebhook: async () => {
+          throw new Error("canary secret must not escape");
+        },
+        sendIMessage: async () => ({
+          status: "accepted",
+          code: "imsg_accepted",
+        }),
       }),
-    });
-
-    const receipts = await routeEvent(config, event, notification, deps, store);
+    );
 
     assert.deepEqual(
-      receipts.map(({ destination, status, code }) => ({
+      results.map(({ destination, status, code }) => ({
         destination,
         status,
         code,
@@ -119,41 +108,11 @@ describe("routeEvent", () => {
         },
       ],
     );
-    assert.equal(JSON.stringify(receipts).includes("canary"), false);
+    assert.equal(JSON.stringify(results).includes("canary"), false);
   });
 
-  it("skips an event already attempted by the destination", async () => {
+  it("does not retain delivery history between invocations", async () => {
     let sends = 0;
-    const store = new MemoryReceipts(new Set(["evt-1:ops"]));
-    const deps = dependencies({
-      sendWebhook: async () => {
-        sends += 1;
-        return { status: "accepted", code: "webhook_accepted" };
-      },
-    });
-
-    const receipts = await routeEvent(
-      configWithRoutes([
-        {
-          events: ["turn.finished"],
-          destinations: ["ops"],
-          template: "compact",
-        },
-      ]),
-      event,
-      notification,
-      deps,
-      store,
-    );
-
-    assert.equal(sends, 0);
-    assert.equal(receipts[0]?.status, "skipped");
-    assert.equal(receipts[0]?.code, "duplicate_event");
-  });
-
-  it("does not retry a failed event on a repeated invocation", async () => {
-    let sends = 0;
-    const store = new MemoryReceipts();
     const deps = dependencies({
       sendWebhook: async () => {
         sends += 1;
@@ -168,50 +127,12 @@ describe("routeEvent", () => {
       },
     ]);
 
-    const [first] = await routeEvent(config, event, notification, deps, store);
-    const [repeated] = await routeEvent(config, event, notification, deps, store);
+    const [first] = await routeEvent(config, event, notification, deps);
+    const [repeated] = await routeEvent(config, event, notification, deps);
 
-    assert.equal(sends, 1);
+    assert.equal(sends, 2);
     assert.equal(first?.status, "failed");
-    assert.equal(repeated?.status, "skipped");
-    assert.equal(repeated?.code, "duplicate_event");
-  });
-
-  it("fails without sending when the attempted receipt lookup is unavailable", async () => {
-    let sends = 0;
-    const items: DeliveryReceipt[] = [];
-    const store: ReceiptRepository = {
-      async hasAttempted() {
-        throw new Error("receipt lookup unavailable");
-      },
-      async append(receipt) {
-        items.push(receipt);
-      },
-    };
-
-    const [receipt] = await routeEvent(
-      configWithRoutes([
-        {
-          events: ["turn.finished"],
-          destinations: ["ops"],
-          template: "compact",
-        },
-      ]),
-      event,
-      notification,
-      dependencies({
-        sendWebhook: async () => {
-          sends += 1;
-          return { status: "accepted", code: "webhook_accepted" };
-        },
-      }),
-      store,
-    );
-
-    assert.equal(sends, 0);
-    assert.equal(receipt?.status, "failed");
-    assert.equal(receipt?.code, "internal_error");
-    assert.deepEqual(items, [receipt]);
+    assert.equal(repeated?.status, "failed");
   });
 
   it("limits destination delivery concurrency to eight", async () => {
@@ -259,7 +180,6 @@ describe("routeEvent", () => {
           return { status: "accepted", code: "webhook_accepted" };
         },
       }),
-      new MemoryReceipts(),
     );
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -271,23 +191,6 @@ describe("routeEvent", () => {
     assert.equal((await routed).length, 10);
   });
 });
-
-class MemoryReceipts implements ReceiptRepository {
-  readonly items: DeliveryReceipt[] = [];
-
-  constructor(private readonly attempted = new Set<string>()) {}
-
-  async hasAttempted(eventId: string, destination: string): Promise<boolean> {
-    return this.attempted.has(`${eventId}:${destination}`);
-  }
-
-  async append(receipt: DeliveryReceipt): Promise<void> {
-    this.items.push(receipt);
-    if (receipt.destination) {
-      this.attempted.add(`${receipt.eventId}:${receipt.destination}`);
-    }
-  }
-}
 
 function configWithRoutes(routes: HeraldConfig["routes"]): HeraldConfig {
   return {
@@ -322,7 +225,6 @@ function dependencies(
   overrides: Partial<DeliveryDependencies> = {},
 ): DeliveryDependencies {
   return {
-    now: () => new Date("2026-07-11T00:00:01.000Z"),
     sendWebhook: async () => ({
       status: "accepted",
       code: "webhook_accepted",

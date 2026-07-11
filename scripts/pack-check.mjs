@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,47 +57,79 @@ try {
     );
   }
 
-  const receiptPath = join(tempRoot, "receipts.ndjson");
+  const configPath = join(tempRoot, "config", "config.toml");
+  const legacyReceiptPath = join(tempRoot, "receipts.ndjson");
+  const pluginDataPath = join(tempRoot, "plugin-data");
+  const statePath = join(tempRoot, "state");
+  const homePath = join(tempRoot, "home");
+  const runtimeStatePaths = [
+    legacyReceiptPath,
+    pluginDataPath,
+    join(statePath, "codex-herald"),
+    join(homePath, ".local", "state", "codex-herald"),
+  ];
   const environment = {
     ...process.env,
-    HOME: join(tempRoot, "home"),
-    XDG_CONFIG_HOME: join(tempRoot, "config"),
-    XDG_STATE_HOME: join(tempRoot, "state"),
-    CODEX_HERALD_RECEIPTS: receiptPath,
+    HOME: homePath,
+    XDG_CONFIG_HOME: join(tempRoot, "xdg-config"),
+    XDG_STATE_HOME: statePath,
+    PLUGIN_DATA: pluginDataPath,
+    CODEX_HERALD_RECEIPTS: legacyReceiptPath,
   };
   delete environment.CODEX_HERALD_CONFIG;
-  delete environment.PLUGIN_DATA;
+  delete environment.CODEX_HERALD_PACK_CHECK_URL;
 
-  const ingest = run(binPath, ["ingest", "--source", "codex-stop"], {
-    cwd: packageRoot,
-    env: environment,
-    input: `${JSON.stringify({
-      session_id: "pack-check-session",
-      transcript_path: join(tempRoot, "must-not-be-read.jsonl"),
+  await mkdir(join(tempRoot, "config"), { recursive: true });
+  await writeFile(
+    configPath,
+    `version = 1
+
+[destinations.ops]
+transport = "webhook"
+url = "$CODEX_HERALD_PACK_CHECK_URL"
+
+[[routes]]
+events = ["turn.finished"]
+destinations = ["ops"]
+template = "compact"
+
+[privacy]
+include_prompt = false
+include_summary = true
+max_chars = 500
+`,
+    { mode: 0o600 },
+  );
+
+  const ingest = run(
+    binPath,
+    ["ingest", "--source", "codex-stop", "--config", configPath],
+    {
       cwd: packageRoot,
-      hook_event_name: "Stop",
-      model: "gpt-5",
-      permission_mode: "default",
-      turn_id: "pack-check-turn",
-      stop_hook_active: false,
-      last_assistant_message: "Pack check fixture.",
-    })}\n`,
-  });
-  if (ingest.stdout !== "" || ingest.stderr !== "") {
-    throw new Error("packed Stop hook must keep stdout and stderr empty");
-  }
-
-  const receipts = (await readFile(receiptPath, "utf8"))
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+      env: environment,
+      input: `${JSON.stringify({
+        session_id: "pack-check-session",
+        transcript_path: join(tempRoot, "must-not-be-read.jsonl"),
+        cwd: packageRoot,
+        hook_event_name: "Stop",
+        model: "gpt-5",
+        permission_mode: "default",
+        turn_id: "pack-check-turn",
+        stop_hook_active: false,
+        last_assistant_message: "Pack check fixture.",
+      })}\n`,
+    },
+  );
+  const ingestOutput = JSON.parse(ingest.stdout);
   if (
-    receipts.length !== 1 ||
-    receipts[0]?.status !== "skipped" ||
-    receipts[0]?.code !== "not_configured"
+    ingest.stderr !== "" ||
+    typeof ingestOutput.systemMessage !== "string" ||
+    !ingestOutput.systemMessage.includes("secret_unavailable") ||
+    ingestOutput.systemMessage.includes("Pack check fixture.")
   ) {
-    throw new Error("packed Stop hook must record skipped/not_configured");
+    throw new Error("packed ingest must emit one non-blocking redacted warning");
   }
+  await requireNoRuntimeState(runtimeStatePaths);
 
   console.log("Package artifact validation passed.");
 } finally {
@@ -126,7 +158,10 @@ function run(command, args, options) {
     );
   }
 
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  return {
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 function parseTarballName(stdout) {
@@ -146,4 +181,27 @@ async function requireRegularFile(path) {
   if (!(await lstat(path)).isFile()) {
     throw new Error(`${path} must be a regular file`);
   }
+}
+
+async function requireNoRuntimeState(paths) {
+  for (const path of paths) {
+    try {
+      await lstat(path);
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) {
+        continue;
+      }
+      throw error;
+    }
+    throw new Error(`packed ingest must not create runtime state at ${path}`);
+  }
+}
+
+function hasErrorCode(error, code) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
 }

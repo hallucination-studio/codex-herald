@@ -2,7 +2,6 @@ export const EVENT_TYPE = "turn.finished" as const;
 
 export type EventType = typeof EVENT_TYPE;
 export type Transport = "imessage" | "webhook";
-export type Driver = "imsg" | "node-http";
 
 export interface CodexStopInput {
   session_id: string;
@@ -90,28 +89,13 @@ export type FailedCode =
   | "webhook_network_error"
   | "webhook_timeout"
   | "webhook_unsafe_url";
-export type SkippedCode = "duplicate_event" | "no_matching_route" | "not_configured";
-
 export type DeliveryOutcome =
   | { status: "accepted"; code: AcceptedCode }
-  | { status: "failed"; code: FailedCode }
-  | { status: "skipped"; code: SkippedCode };
+  | { status: "failed"; code: FailedCode };
 
-interface ReceiptBase {
-  schemaVersion: 1;
-  eventId: string;
-  eventType: EventType;
-  destination: string | null;
-  transport: Transport | null;
-  driver: Driver | null;
-  recordedAt: string;
-  durationMs: number;
-}
-
-export type DeliveryReceipt = ReceiptBase & DeliveryOutcome;
+export type DeliveryResult = { destination: string } & DeliveryOutcome;
 
 export interface DeliveryDependencies {
-  now(): Date;
   sendWebhook(
     destination: WebhookDestination,
     event: LifecycleEvent,

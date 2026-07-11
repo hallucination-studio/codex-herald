@@ -16,30 +16,28 @@ Initial MVP.
   <code>test</code>, <code>doctor</code>, and non-interactive
   <code>ingest</code>.
 - One-step iMessage setup with an explicit recipient and immediate check
-  notification using the existing honest receipt semantics.
+  notification using honest transport-acceptance semantics.
 - Normalization of Codex Stop facts to the channel-neutral
   <code>turn.finished</code> route event.
 - Strict TOML destinations, routes, compact templates, and summary privacy
   policy.
 - Independent webhook and iMessage delivery through the Node HTTP client and
   imsg driver.
-- Redacted <code>accepted</code>, <code>failed</code>, and
-  <code>skipped</code> NDJSON receipts with best-effort duplicate checks and
-  bounded rotation.
+- Stateless real-time delivery with no queue, outbox, automatic retry, receipt
+  store, or other runtime delivery history.
 - Node 22 TypeScript build, lint, test, packaging, and audit workflows.
 
 ### Fixed
 
 - Prevented disconnected or disabled Messages accounts from producing false
-  iMessage acceptance receipts by checking live account readiness before every
+  iMessage acceptance results by checking live account readiness before every
   send and during `doctor`.
 - Made lifecycle iMessages self-identifying with a fixed Codex Herald title,
   source, sanitized project basename, event, and summary; setup checks use an
   explicit Setup context.
-- Prevented repeated Hook invocations from retrying an event after a recorded
-  failed attempt; explicit CLI tests still create a fresh test event.
-- Kept every ingest failure on exit code 1 with empty stdout so Codex never
-  interprets a usage error as a Stop continuation request.
+- Kept destination delivery failures non-blocking with exit code `0` and a safe,
+  length-bounded Codex `systemMessage`; fatal input, configuration, and local
+  errors still use exit code `1` with redacted stderr.
 - Made the packaged CLI recognize canonicalized and symlinked entry paths.
 - Bounded webhook URL, secret-header, and HTTP work under one cancellable
   deadline and closed successful streaming responses immediately.
@@ -49,10 +47,10 @@ Initial MVP.
 - Configuration is resolved only from explicit or user-level paths and is
   never discovered from the active repository.
 - Environment and macOS Keychain references keep resolved secrets out of config
-  output, diagnostics, and receipts.
+  output, diagnostics, and runtime delivery storage.
 - Webhooks default to HTTPS and enforce URL validation, redirect refusal,
   timeouts, secret-backed headers, and an explicit insecure-HTTP opt-in.
-- Hook input, config, process output, and receipt storage are size-bounded and
+- Hook input, config, process output, and Hook warnings are size-bounded and
   validated at their trust boundaries.
 - Config files must be owner-only, fatal Hook diagnostics redact local paths,
   and <code>imsg</code> runs through a resolved absolute path with fixed argv,
@@ -65,3 +63,5 @@ Initial MVP.
   SDK are outside the MVP.
 - iMessage delivery requires macOS 14 or newer and targets the imsg v0.12.3 CLI
   contract.
+- Repeated or overlapping Hook invocations may send duplicate notifications;
+  the MVP has no cross-invocation deduplication or historical delivery log.

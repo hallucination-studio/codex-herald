@@ -68,11 +68,13 @@ Run the built CLI directly:
 
 - Keep changes small and independently reviewable.
 - Preserve strict boundary validation for Hook JSON, TOML, secrets, processes,
-  HTTP, and persisted receipts.
+  HTTP, and bounded Hook diagnostics.
 - Do not introduce a generic adapter SDK for an MVP-only use case.
 - Do not discover configuration relative to the current directory or git root.
 - Do not parse <code>transcript_path</code>.
 - Do not make destination failures alter Codex continuation behavior.
+- Do not add a delivery queue, automatic retry, receipt store, or other runtime
+  delivery history.
 - Update the generated <code>bin/codex-herald</code> with
   <code>npm run build</code> when source behavior changes.
 
@@ -108,20 +110,28 @@ config_dir="$(mktemp -d)"
 The packaged <code>ingest --source codex-stop</code> path has stricter output
 rules than interactive commands:
 
-- stdout stays empty;
-- a valid event exits 0 even when a destination fails;
-- malformed Hook input or an unrecoverable local failure exits 1;
-- delivery outcomes are represented by redacted receipts; and
+- full success, missing config, and no matching route keep stdout and stderr
+  empty;
+- a destination failure exits 0 and emits at most one safe, length-bounded JSON
+  <code>systemMessage</code> on stdout;
+- malformed or oversized Hook input, invalid configured state, or another fatal
+  local failure exits 1 with empty stdout and redacted stderr;
 - Herald does not emit continuation controls such as
   <code>decision: "block"</code> or <code>continue: false</code>.
 - Usage failures on this path exit 1, never the Codex continuation code 2.
+
+Hook warnings may contain only validated, bounded destination identifiers and
+stable failure codes. They must not include notification content, recipients,
+URLs, secrets, local paths, raw process output, or exception text. Tests must
+also prove that repeated invocations make fresh attempts without creating
+runtime delivery files.
 
 Add or update CLI process tests whenever this contract changes.
 
 ## Documentation and release notes
 
-Update README examples when user-facing commands, config, requirements, receipt
-paths, or transport semantics change. Update [CHANGELOG.md](CHANGELOG.md) in the
+Update README examples when user-facing commands, config, requirements, Hook
+output, or transport semantics change. Update [CHANGELOG.md](CHANGELOG.md) in the
 same change as a user-visible modification.
 
 Significant architectural or trust-boundary changes need a new ADR that
@@ -136,5 +146,5 @@ supersedes, rather than deletes, an earlier decision.
 - [ ] The diff contains no secrets, personal recipients, or generated test data.
 - [ ] README, security documentation, spec, ADRs, and changelog are updated as
       required.
-- [ ] Public output uses <code>accepted</code>, <code>failed</code>, and
-      <code>skipped</code> honestly.
+- [ ] Public output uses <code>accepted</code> and <code>failed</code> honestly.
+- [ ] No queue, retry, receipt, or runtime delivery state was introduced.
