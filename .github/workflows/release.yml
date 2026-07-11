@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: make test
+
+      - name: Verify release metadata
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          repository="$(node -p "require('./package.json').repository.url")"
+          test "${repository}" = "git+https://github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Pack release artifact
+        id: package
+        run: |
+          npm pack --json > pack.json
+          tarball="$(node -e 'const value = require("./pack.json"); process.stdout.write(value[0].filename)')"
+          integrity="$(node -e 'const value = require("./pack.json"); process.stdout.write(value[0].integrity)')"
+          test -f "${tarball}"
+          echo "tarball=${tarball}" >> "${GITHUB_OUTPUT}"
+          echo "integrity=${integrity}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          LOCAL_INTEGRITY: ${{ steps.package.outputs.integrity }}
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          published_integrity="$(npm view "${name}@${version}" dist.integrity --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          if [ -n "${published_integrity}" ]; then
+            test "${published_integrity}" = "${LOCAL_INTEGRITY}"
+            echo "${name}@${version} is already published"
+          else
+            npm publish "${{ steps.package.outputs.tarball }}" --access public --provenance
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARBALL: ${{ steps.package.outputs.tarball }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${TARBALL}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${TARBALL}" \
+              --verify-tag \
+              --generate-notes \
+              --title "Codex Herald ${GITHUB_REF_NAME#v}"
+          fi

@@ -44,6 +44,7 @@ Useful individual commands:
 | <code>npm run lint</code> | Check Biome formatting and lint rules |
 | <code>npm run format</code> | Apply Biome fixes |
 | <code>npm run typecheck</code> | Type-check source and test TypeScript |
+| <code>make test</code> | Run the test command used by GitHub Actions |
 | <code>npm test</code> | Compile and run the Node test suite |
 | <code>npm run build</code> | Rebuild <code>bin/codex-herald</code> |
 | <code>npm run check</code> | Run the complete local quality gate |
@@ -136,6 +137,18 @@ same change as a user-visible modification.
 
 Significant architectural or trust-boundary changes need a new ADR that
 supersedes, rather than deletes, an earlier decision.
+
+## Release
+
+Pushing a tag whose name matches <code>v&lt;package version&gt;</code> runs the
+release workflow. It installs the lockfile, runs <code>make test</code>, packs one
+npm tarball, publishes that exact artifact, and attaches it to a generated
+GitHub Release. The repository must provide an Actions secret named
+<code>NPM_TOKEN</code>. For the first release, use an npm granular token with
+read/write access to all packages and enable bypass 2FA when the account or
+package requires 2FA for publishing. Provenance also requires the public GitHub
+repository to match the case-sensitive <code>repository.url</code> in
+<code>package.json</code>.
 
 ## Pull request checklist
 

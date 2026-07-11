@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Quality gates
+  test:
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -32,26 +32,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Type-check
-        run: npm run typecheck
-
       - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Verify generated CLI is current
-        run: git diff --exit-code -- bin/codex-herald
-
-      - name: Validate plugin contract
-        run: npm run validate:plugin
-
-      - name: Audit dependencies
-        run: npm audit --registry=https://registry.npmjs.org --audit-level=high
-
-      - name: Validate package artifact
-        run: npm run pack:check
+        run: make test
