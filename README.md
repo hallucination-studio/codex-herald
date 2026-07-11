@@ -117,20 +117,23 @@ file with mode <code>0600</code>. It refuses to replace an existing config
 unless <code>--force</code> is supplied. Herald also refuses to load a config
 that grants any group or other-user permissions, including read-only access.
 
-## Future installation
+## Quick start with npx
 
-The following describes the intended release flow; it is not available until
-the corresponding package and marketplace entry are actually published.
-
-After an npm release exists, npm's standard global-install form will be:
+After the npm release is published, download the CLI and create the private
+user configuration in one command:
 
 ~~~bash
-npm install --global codex-herald
-codex-herald --version
+npx --yes codex-herald@latest setup
 ~~~
 
-This follows npm's official
-[global install syntax](https://docs.npmjs.com/cli/v11/commands/npm-install/).
+This uses npm's execution cache and does not require a global CLI install. The
+command creates the configuration directory with mode <code>0700</code> and
+the config file with mode <code>0600</code>. Re-running it will not replace an
+existing config unless you explicitly pass <code>--force</code>.
+
+Running the CLI with <code>npx</code> does not by itself install or enable the
+bundled Codex plugin. Version 0.1.0 is still unreleased, so the command above
+becomes available only after the npm package is published.
 
 After a Codex marketplace lists <code>codex-herald</code>, open the official
 plugin browser and install it from that configured marketplace:
@@ -147,6 +150,13 @@ placeholder. See the official [Codex plugin guide](https://developers.openai.com
 and [plugin build guide](https://developers.openai.com/codex/plugins/build).
 
 ## Configure destinations and routes
+
+Run <code>setup</code>, then edit the path printed by the command—normally
+<code>~/.config/codex-herald/config.toml</code>. Declare at least one
+<code>destination</code>, add a <code>route</code> that sends
+<code>turn.finished</code> to it, and keep credentials in an environment
+variable or macOS Keychain reference. The environment variable must be present
+in the process that launches Codex, not only in an unrelated shell.
 
 Copy [examples/config.toml](examples/config.toml), or replace the empty
 destination and route tables produced by <code>setup</code> with:
@@ -179,6 +189,11 @@ include_summary = true
 max_chars = 500
 ~~~
 
+Keep only the destinations you intend to use, and remove the same names from
+the route. For example, a webhook-only setup should remove
+<code>destinations.phone</code> and <code>"phone"</code>; otherwise
+<code>doctor</code> will correctly report that <code>imsg</code> is not ready.
+
 Set <code>OPS_WEBHOOK_URL</code> in the environment that launches Codex. The
 Keychain item above uses service <code>codex-herald</code> and account
 <code>ops-authorization</code>; its value must be the complete header value,
@@ -189,6 +204,18 @@ environment variable:
 [destinations.ops.headers]
 Authorization = "$OPS_AUTHORIZATION"
 ~~~
+
+Validate the configuration and perform one real test delivery before trusting
+the Hook:
+
+~~~bash
+npx --yes codex-herald@latest doctor
+npx --yes codex-herald@latest test ops --json
+~~~
+
+<code>doctor</code> does not send a notification. <code>test</code> does, and
+reports <code>accepted</code> only when the selected transport accepts the
+request.
 
 Supported secret references are exactly:
 
