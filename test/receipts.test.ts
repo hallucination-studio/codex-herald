@@ -15,11 +15,11 @@ import { afterEach, describe, it } from "node:test";
 import { HeraldError } from "../src/domain/errors.js";
 import type { DeliveryReceipt } from "../src/domain/types.js";
 import {
-  acceptedKey,
   appendReceipt,
+  attemptKey,
   createReceiptRepository,
   RECEIPT_MAX_BYTES,
-  readAcceptedKeys,
+  readAttemptedKeys,
   resolveReceiptPath,
 } from "../src/observability/receipts.js";
 
@@ -210,8 +210,21 @@ describe("receipt persistence", () => {
   });
 });
 
-describe("accepted receipt lookup", () => {
-  it("reads accepted keys from the rotated and current files and skips damaged lines", async () => {
+describe("attempted receipt lookup", () => {
+  it("rejects a non-regular receipt history path", async () => {
+    const directory = await makeTemporaryDirectory();
+    const targetPath = join(directory, "target.ndjson");
+    const receiptPath = join(directory, "receipts.ndjson");
+    await writeFile(targetPath, "");
+    await symlink(targetPath, receiptPath);
+
+    await assert.rejects(
+      readAttemptedKeys(receiptPath),
+      /receipt history path must be a regular file/i,
+    );
+  });
+
+  it("reads attempted keys from the rotated and current files and skips damaged lines", async () => {
     const directory = await makeTemporaryDirectory();
     const receiptPath = join(directory, "receipts.ndjson");
     const rotatedPath = `${receiptPath}.1`;
@@ -238,11 +251,15 @@ describe("accepted receipt lookup", () => {
       ].join("\n"),
     );
 
-    const keys = await readAcceptedKeys(receiptPath);
+    const keys = await readAttemptedKeys(receiptPath);
 
     assert.deepEqual(
       [...keys].sort(),
-      [acceptedKey("event-new", "ops"), acceptedKey("event-old", "phone")].sort(),
+      [
+        attemptKey("event-failed", "phone"),
+        attemptKey("event-new", "ops"),
+        attemptKey("event-old", "phone"),
+      ].sort(),
     );
   });
 
@@ -251,17 +268,17 @@ describe("accepted receipt lookup", () => {
     const receiptPath = join(directory, "receipts.ndjson");
     const repository = createReceiptRepository(receiptPath);
 
-    assert.equal(await repository.hasAccepted("event-1", "phone"), false);
+    assert.equal(await repository.hasAttempted("event-1", "phone"), false);
     await repository.append(acceptedReceipt("event-1", "phone"));
-    assert.equal(await repository.hasAccepted("event-1", "phone"), true);
-    assert.equal(await repository.hasAccepted("event-1", "ops"), false);
+    assert.equal(await repository.hasAttempted("event-1", "phone"), true);
+    assert.equal(await repository.hasAttempted("event-1", "ops"), false);
 
     const reopened = createReceiptRepository(receiptPath);
-    assert.equal(await reopened.hasAccepted("event-1", "phone"), true);
+    assert.equal(await reopened.hasAttempted("event-1", "phone"), true);
   });
 
   it("uses unambiguous event and destination keys", () => {
-    assert.notEqual(acceptedKey("event:one", "two"), acceptedKey("event", "one:two"));
+    assert.notEqual(attemptKey("event:one", "two"), attemptKey("event", "one:two"));
   });
 });
 

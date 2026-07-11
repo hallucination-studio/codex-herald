@@ -36,6 +36,7 @@ describe("CLI commands", () => {
     const receiptPath = join(root, "receipts.ndjson");
     const recipient = "private-imessage@example.com";
     const output = captureIo();
+    let sends = 0;
 
     const exitCode = await runCli(
       ["setup", "--config", configPath, "--imessage-recipient", recipient],
@@ -43,14 +44,24 @@ describe("CLI commands", () => {
       runtime({
         env: { CODEX_HERALD_RECEIPTS: receiptPath },
         homeDir: root,
-        sendIMessage: async (destination) => {
+        sendIMessage: async (destination, _event, notification) => {
+          sends += 1;
           assert.equal(destination.recipient, recipient);
+          assert.deepEqual(notification, {
+            title: "Codex Herald",
+            body:
+              "Source: Codex Herald\nProject: Setup\nEvent: Delivery check\n\n" +
+              "Summary:\nYour iMessage destination is configured and ready.",
+            severity: "info",
+            truncated: false,
+          });
           return { status: "accepted", code: "imsg_accepted" };
         },
       }),
     );
 
     assert.equal(exitCode, 0);
+    assert.equal(sends, 1);
     assert.equal(output.stderr.length, 0);
     assert.doesNotMatch(output.stdout.join("\n"), new RegExp(recipient, "u"));
     assert.match(output.stdout.join("\n"), /phone: accepted \(imsg_accepted\)/u);
@@ -79,6 +90,7 @@ describe("CLI commands", () => {
     const receiptPath = join(root, "receipts.ndjson");
     const recipient = "failed-check@example.com";
     const output = captureIo();
+    let sends = 0;
 
     const exitCode = await runCli(
       ["setup", "--config", configPath, "--imessage-recipient", recipient],
@@ -86,14 +98,18 @@ describe("CLI commands", () => {
       runtime({
         env: { CODEX_HERALD_RECEIPTS: receiptPath },
         homeDir: root,
-        sendIMessage: async () => ({
-          status: "failed",
-          code: "imessage_not_ready",
-        }),
+        sendIMessage: async () => {
+          sends += 1;
+          return {
+            status: "failed",
+            code: "imessage_not_ready",
+          };
+        },
       }),
     );
 
     assert.equal(exitCode, 1);
+    assert.equal(sends, 1);
     assert.doesNotMatch(output.stdout.join("\n"), new RegExp(recipient, "u"));
     assert.match(output.stdout.join("\n"), /Messages > Settings > iMessage/u);
     assert.equal(output.stderr.length, 0);

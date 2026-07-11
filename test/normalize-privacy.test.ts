@@ -49,6 +49,7 @@ describe("Codex Stop normalization", () => {
         session_id: "session-123",
         turn_id: "turn-456",
         hook_event_name: "Stop",
+        cwd: "/Users/murphy/code/github/herald",
         last_assistant_message: "Implemented the requested change.",
       }),
     );
@@ -57,6 +58,7 @@ describe("Codex Stop normalization", () => {
       session_id: "session-123",
       turn_id: "turn-456",
       hook_event_name: "Stop",
+      cwd: "/Users/murphy/code/github/herald",
       last_assistant_message: "Implemented the requested change.",
     });
   });
@@ -75,7 +77,7 @@ describe("Codex Stop normalization", () => {
       }),
     );
 
-    assert.deepEqual(parsed, validStopInput);
+    assert.deepEqual(parsed, { ...validStopInput, cwd: "/tmp/project" });
     assert.equal("prompt" in parsed, false);
     assert.equal("future_codex_field" in parsed, false);
   });
@@ -121,20 +123,23 @@ describe("Codex Stop normalization", () => {
   });
 
   it("derives a stable id from session, turn, hook, and message hash", () => {
-    const first = normalizeCodexStop(
-      validStopInput,
-      new Date("2026-07-11T00:00:00.000Z"),
-    );
-    const repeated = normalizeCodexStop(
-      validStopInput,
-      new Date("2026-07-11T00:01:00.000Z"),
-    );
+    const input: CodexStopInput = {
+      ...validStopInput,
+      cwd: "/Users/murphy/code/github/herald",
+    };
+    const first = normalizeCodexStop(input, new Date("2026-07-11T00:00:00.000Z"));
+    const repeated = normalizeCodexStop(input, new Date("2026-07-11T00:01:00.000Z"));
     const changedMessage = normalizeCodexStop(
       { ...validStopInput, last_assistant_message: "A different result." },
       new Date("2026-07-11T00:00:00.000Z"),
     );
+    const changedCwd = normalizeCodexStop(
+      { ...input, cwd: "/Users/murphy/code/github/another-project" },
+      new Date("2026-07-11T00:00:00.000Z"),
+    );
 
     assert.equal(first.id, repeated.id);
+    assert.equal(first.id, changedCwd.id);
     assert.notEqual(first.id, changedMessage.id);
     assert.match(first.id, /^evt_[a-f0-9]{64}$/);
     assert.deepEqual(first, {
@@ -142,9 +147,33 @@ describe("Codex Stop normalization", () => {
       type: "turn.finished",
       source: "codex",
       sourceEvent: "Stop",
+      project: "herald",
       occurredAt: "2026-07-11T00:00:00.000Z",
       summary: validStopInput.last_assistant_message,
     });
+  });
+
+  it("uses only a safe, bounded cwd basename as the project", () => {
+    const project = `${"工".repeat(90)}\u0000\r\n`;
+    const event = normalizeCodexStop(
+      { ...validStopInput, cwd: `/private/parent/${project}` },
+      new Date("2026-07-11T00:00:00.000Z"),
+    );
+
+    assert.equal(event.project, "工".repeat(80));
+    assert.doesNotMatch(JSON.stringify(event), /private\/parent/u);
+    for (const codePoint of [0, 10, 13]) {
+      assert.equal(event.project.includes(String.fromCodePoint(codePoint)), false);
+    }
+  });
+
+  it("labels events without cwd as an unknown project", () => {
+    const event = normalizeCodexStop(
+      validStopInput,
+      new Date("2026-07-11T00:00:00.000Z"),
+    );
+
+    assert.equal(event.project, "Unknown");
   });
 });
 
@@ -154,6 +183,7 @@ describe("privacy policy", () => {
     type: "turn.finished",
     source: "codex",
     sourceEvent: "Stop",
+    project: "herald",
     occurredAt: "2026-07-11T00:00:00.000Z",
     summary: "Sensitive summary",
   };
@@ -166,8 +196,10 @@ describe("privacy policy", () => {
     });
 
     assert.deepEqual(notification, {
-      title: "Codex turn finished",
-      body: GENERIC_NOTIFICATION_BODY,
+      title: "Codex Herald",
+      body:
+        "Source: Codex\nProject: herald\nEvent: Turn finished\n\n" +
+        `Summary:\n${GENERIC_NOTIFICATION_BODY}`,
       severity: "info",
       truncated: false,
     });
@@ -185,7 +217,11 @@ describe("privacy policy", () => {
       { includePrompt: false, includeSummary: true, maxChars: 500 },
     );
 
-    assert.equal(/[\p{Cc}\p{Cf}]/u.test(notification.body), false);
+    assert.equal(notification.title, "Codex Herald");
+    assert.match(notification.body, /^Source: Codex\nProject: herald/u);
+    for (const codePoint of [0, 7, 13]) {
+      assert.equal(notification.body.includes(String.fromCodePoint(codePoint)), false);
+    }
     assert.doesNotMatch(notification.body, /sk-abcdefghijklmnopqrstuvwxyz/u);
     assert.doesNotMatch(notification.body, /eyJhbGciOiJIUzI1NiJ9/u);
     assert.doesNotMatch(notification.body, /ghp_abcdefghijklmnopqrstuvwxyz123456/u);
@@ -199,7 +235,10 @@ describe("privacy policy", () => {
       { includePrompt: false, includeSummary: true, maxChars: 2 },
     );
 
-    assert.equal(notification.body, "A😀");
+    assert.equal(
+      notification.body,
+      "Source: Codex\nProject: herald\nEvent: Turn finished\n\nSummary:\nA😀",
+    );
     assert.equal(notification.truncated, true);
   });
 
@@ -209,7 +248,11 @@ describe("privacy policy", () => {
       { includePrompt: false, includeSummary: true, maxChars: 500 },
     );
 
-    assert.equal(notification.body, GENERIC_NOTIFICATION_BODY);
+    assert.equal(
+      notification.body,
+      "Source: Codex\nProject: herald\nEvent: Turn finished\n\n" +
+        `Summary:\n${GENERIC_NOTIFICATION_BODY}`,
+    );
     assert.equal(notification.truncated, false);
   });
 });

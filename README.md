@@ -77,7 +77,7 @@ Codex Herald currently targets and tests the **imsg v0.12.3 CLI contract**. It
 always selects iMessage explicitly and does not fall back to SMS:
 
 ~~~text
-imsg send --to <recipient> --text <body> --service imessage --json
+imsg send --to <recipient> --text <message> --service imessage --json
 ~~~
 
 Install imsg using its documented Homebrew tap:
@@ -133,6 +133,18 @@ the <code>phone</code> destination and immediately sends one check notification:
 npx --yes codex-herald@latest setup --imessage-recipient "you@example.com"
 ~~~
 
+The check is deliberately self-identifying:
+
+~~~text
+Codex Herald
+Source: Codex Herald
+Project: Setup
+Event: Delivery check
+
+Summary:
+Your iMessage destination is configured and ready.
+~~~
+
 Before sending, Herald verifies that Messages has an enabled, connected
 iMessage account. If the account is not ready, Herald does not invoke
 <code>imsg send</code>; the command exits <code>1</code>, keeps the valid config,
@@ -141,6 +153,14 @@ run, it reports <code>imessage_check_failed</code>; allow the app running Herald
 to control Messages under macOS Automation, then retry with
 <code>codex-herald test phone</code>. The recipient is not printed or stored in
 the receipt, although your shell may retain the command in its history.
+
+Herald has no message queue or outbox. Each explicit setup check or
+<code>test</code> invocation makes at most one real-time send attempt, never
+retries it automatically, and never persists the notification body. If Messages
+was just re-enabled, Messages.app—not Herald—may release older outgoing items
+that macOS accepted previously. Wait for those items to finish, then run one
+check. Herald's live readiness guard prevents new sends while the selected
+iMessage service is disabled or disconnected.
 
 This uses npm's execution cache and does not require a global CLI install. The
 command creates the configuration directory with mode <code>0700</code> and
@@ -234,6 +254,28 @@ the <code>imsg</code> executable and the live Messages account state.
 <code>test</code> performs the same readiness check before its real send and
 reports <code>accepted</code> only when the selected transport accepts the
 request. A readiness check does not prove that a recipient is reachable.
+
+### Notification format
+
+Every compact lifecycle notification identifies the sender, source project,
+and event before showing model-generated text. For a Stop event in this
+repository, iMessage receives:
+
+~~~text
+Codex Herald
+Source: Codex
+Project: herald
+Event: Turn finished
+
+Summary:
+Implemented the requested change.
+~~~
+
+<code>Project</code> is only the cleaned final component of Codex's current
+working directory; Herald never sends the complete local path. If Codex omits
+the working directory, the value is <code>Unknown</code>. The privacy
+<code>max_chars</code> limit applies only to <code>Summary</code>, so the
+identity header is never truncated away.
 
 Supported secret references are exactly:
 
@@ -337,9 +379,10 @@ continue.
 Codex launches matching command hooks concurrently. Another Stop Hook may ask
 Codex to continue the turn, which can lead to a later Stop event for the same
 turn. Herald derives a stable event id from the session id, turn id, Stop name,
-and last-assistant-message hash. Herald checks existing accepted receipts before
-sending, but overlapping Hook processes may still race and deliver a duplicate.
-A later continuation with different assistant text is a new lifecycle fact.
+and last-assistant-message hash. Herald checks existing destination-attempt
+receipts before sending, so a recorded failure is not retried automatically.
+Overlapping Hook processes may still race and deliver a duplicate. A later
+continuation with different assistant text is a new lifecycle fact.
 
 Herald itself never returns <code>decision: "block"</code>,
 <code>continue: false</code>, or exit code <code>2</code> from its packaged
@@ -401,9 +444,11 @@ timestamps, and durations. They never contain notification bodies, webhook
 URLs or headers, recipients, resolved secrets, raw process output, or exception
 stacks.
 
-Accepted receipts are checked on a best-effort basis before sending. This avoids
-ordinary repeat invocations, but MVP does not claim exactly-once delivery across
-overlapping Hook processes.
+Destination-attempt receipts are checked on a best-effort basis before sending.
+This avoids retrying both accepted and failed events during ordinary repeat
+invocations, but MVP does not claim exactly-once delivery across overlapping
+Hook processes. If the attempt history cannot be read, Herald fails closed and
+does not invoke the transport.
 
 Receipt statuses are intentionally conservative:
 
@@ -421,10 +466,12 @@ not prevent another destination from being attempted.
 ## Privacy and security
 
 Herald only uses Codex's <code>last_assistant_message</code> as the optional
-summary. It does not parse <code>transcript_path</code>, whose format is not a
-stable Hook interface. The summary is normalized, passed through common-secret
-redaction, and truncated before any adapter runs. Redaction reduces accidental
-leakage but is not a data-loss-prevention guarantee.
+summary and the cleaned final component of <code>cwd</code> as the project name.
+It does not parse <code>transcript_path</code>, whose format is not a stable Hook
+interface, and it never sends the complete working-directory path. The summary
+is normalized, passed through common-secret redaction, and truncated before any
+adapter runs. Redaction reduces accidental leakage but is not a
+data-loss-prevention guarantee.
 
 For the MVP:
 

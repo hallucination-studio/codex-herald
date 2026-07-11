@@ -20,13 +20,16 @@ const event: LifecycleEvent = {
   type: "turn.finished",
   source: "codex",
   sourceEvent: "Stop",
+  project: "herald",
   occurredAt: "2026-07-11T00:00:00.000Z",
   summary: "Finished",
 };
 
 const notification: Notification = {
-  title: "Codex turn finished",
-  body: "Implemented the requested change.",
+  title: "Codex Herald",
+  body:
+    "Source: Codex\nProject: herald\nEvent: Turn finished\n\n" +
+    "Summary:\nImplemented the requested change.",
   severity: "info",
   truncated: false,
 };
@@ -98,11 +101,12 @@ describe("sendIMessage", () => {
     });
   });
 
-  it("passes recipient and body as exact argv data without a shell", async () => {
+  it("passes recipient and the complete Herald message as exact argv data", async () => {
     await withFakeImsg(async ({ directory, executable }) => {
       const capturePath = join(directory, "capture.json");
       const injectedPath = join(directory, "must-not-exist");
       const recipient = `+86138; touch ${injectedPath}`;
+      const title = "Codex Herald";
       const body = `$(touch ${injectedPath}) \`touch ${injectedPath}\``;
 
       await installNodeExecutable(
@@ -124,7 +128,7 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
         const outcome = await sendIMessage(
           destination({ recipient }),
           event,
-          { ...notification, body },
+          { ...notification, title, body },
           "darwin",
           readyIMessage,
         );
@@ -147,7 +151,7 @@ process.stdout.write(JSON.stringify({ status: "sent" }));
         "--to",
         recipient,
         "--text",
-        body,
+        `${title}\n${body}`,
         "--service",
         "imessage",
         "--json",

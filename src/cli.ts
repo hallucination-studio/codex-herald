@@ -20,14 +20,13 @@ import {
   normalizeCodexStop,
   parseCodexStopText,
 } from "./core/normalize.js";
-import { applyPrivacy } from "./core/privacy.js";
+import { applyPrivacy, createDeliveryCheckNotification } from "./core/privacy.js";
 import { routeEvent } from "./core/router.js";
 import { HeraldError, isHeraldError } from "./domain/errors.js";
 import type {
   DeliveryDependencies,
   DeliveryReceipt,
   LifecycleEvent,
-  Notification,
   WebhookDestination,
 } from "./domain/types.js";
 import {
@@ -48,7 +47,6 @@ import {
 } from "./transports/webhook.js";
 
 const VERSION = "0.1.0";
-const TEST_NOTIFICATION_BODY = "Test notification from Codex Herald.";
 
 export interface CliIo {
   stdout(line: string): void;
@@ -283,7 +281,8 @@ async function testDestination(
   runtime: CliRuntime,
 ): Promise<number> {
   const loaded = await loadConfig(configOptions);
-  if (!loaded.config.destinations[destinationId]) {
+  const destination = loaded.config.destinations[destinationId];
+  if (!destination) {
     throw new HeraldError(
       "DESTINATION_NOT_FOUND",
       `Unknown destination: ${destinationId}`,
@@ -295,15 +294,11 @@ async function testDestination(
     type: "turn.finished",
     source: "codex",
     sourceEvent: "Stop",
+    project: "Setup",
     occurredAt: runtime.now().toISOString(),
-    summary: TEST_NOTIFICATION_BODY,
+    summary: null,
   };
-  const notification: Notification = {
-    title: "Codex Herald test",
-    body: TEST_NOTIFICATION_BODY,
-    severity: "info",
-    truncated: false,
-  };
+  const notification = createDeliveryCheckNotification(destination.transport);
   const config = {
     ...loaded.config,
     routes: [

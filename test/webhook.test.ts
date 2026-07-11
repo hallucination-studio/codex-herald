@@ -15,6 +15,7 @@ const event: LifecycleEvent = {
   type: "turn.finished",
   source: "codex",
   sourceEvent: "Stop",
+  project: "herald",
   occurredAt: "2026-07-11T00:00:00.000Z",
   summary: "Ready",
 };

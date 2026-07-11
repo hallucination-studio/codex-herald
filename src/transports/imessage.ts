@@ -157,7 +157,7 @@ export async function sendIMessage(
       "--to",
       destination.recipient,
       "--text",
-      notification.body,
+      `${notification.title}\n${notification.body}`,
       "--service",
       "imessage",
       "--json",

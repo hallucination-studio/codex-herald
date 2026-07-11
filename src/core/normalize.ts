@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { basename } from "node:path";
 import { z } from "zod";
 import { HeraldError } from "../domain/errors.js";
 import {
@@ -10,10 +11,14 @@ import {
 
 export const MAX_CODEX_STOP_INPUT_BYTES = 1024 * 1024;
 
+const MAX_PROJECT_CHARS = 80;
+const UNKNOWN_PROJECT = "Unknown";
+
 export const CodexStopInputSchema = z.object({
   session_id: z.string().min(1),
   hook_event_name: z.literal("Stop"),
   turn_id: z.string().min(1),
+  cwd: z.string().optional(),
   last_assistant_message: z.string().nullable(),
 });
 
@@ -60,9 +65,27 @@ export function normalizeCodexStop(
     type: EVENT_TYPE,
     source: "codex",
     sourceEvent: "Stop",
+    project: projectFromCwd(input.cwd),
     occurredAt: occurredAt.toISOString(),
     summary: input.last_assistant_message,
   };
+}
+
+function projectFromCwd(cwd: string | undefined): string {
+  if (!cwd) {
+    return UNKNOWN_PROJECT;
+  }
+
+  const project = basename(cwd)
+    .replace(/\p{Cf}+/gu, "")
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!project) {
+    return UNKNOWN_PROJECT;
+  }
+
+  return Array.from(project).slice(0, MAX_PROJECT_CHARS).join("");
 }
 
 function sha256(value: string): string {

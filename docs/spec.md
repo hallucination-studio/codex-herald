@@ -28,6 +28,8 @@ end-device delivery.
   account is ready.
 - I can inspect `accepted`, `failed`, and `skipped` receipts without exposing
   message bodies or secrets.
+- Every lifecycle notification identifies Codex Herald, the source, the
+  sanitized project basename, and the lifecycle event before any summary text.
 
 ## Source event semantics
 
@@ -39,7 +41,8 @@ later Stop fact may occur for the same Codex turn.
 
 Herald derives a stable event id from the Codex session id, turn id, hook name,
 and a hash of the last assistant message. Before sending, Herald makes a
-best-effort check for an accepted receipt for the same event and destination.
+best-effort check for any prior attempt receipt for the same event and
+destination. A recorded failure is not retried automatically.
 
 ## Tech stack
 
@@ -90,6 +93,12 @@ read-only Messages AppleScript probe and checks the first iMessage service that
 the imsg v0.12.3 send path selects. Herald sends only when that service is
 enabled and connected. It does not read account aliases, chats, or message
 bodies.
+
+Herald has no delivery queue or outbox. Each explicit setup check or destination
+test makes one real-time send attempt, has no automatic retry, and does not
+persist the notification body. The notification uses the same compact identity
+contract as a Stop delivery, but labels itself as `Source: Codex Herald`,
+`Project: Setup`, and `Event: Delivery check`.
 
 ## Project structure
 
@@ -180,6 +189,7 @@ type LifecycleEvent = {
   type: "turn.finished";
   source: "codex";
   sourceEvent: "Stop";
+  project: string;
   occurredAt: string;
   summary: string | null;
 };
@@ -207,6 +217,23 @@ type DeliveryReceipt = {
 };
 ```
 
+For iMessage, the compact text contract is:
+
+```text
+Codex Herald
+Source: Codex
+Project: <sanitized cwd basename or Unknown>
+Event: Turn finished
+
+Summary:
+<privacy-processed summary>
+```
+
+The project is capped at 80 Unicode code points and never contains the full
+working-directory path. `privacy.max_chars` applies only to the summary, not
+the identity header. Webhooks keep the same title and body in separate JSON
+fields.
+
 Receipt `code` is a bounded machine-readable value. Receipts never contain the
 notification body, webhook URL, headers, recipient, raw process output, or
 exception stack.
@@ -229,10 +256,12 @@ exception stack.
 - A missing route produces a `skipped/no_matching_route` receipt.
 - A missing user configuration produces a `skipped/not_configured` receipt and
   does not disrupt the Codex turn.
-- A previously accepted event/destination pair produces a
+- A previously attempted event/destination pair produces a
   `skipped/duplicate_event` receipt.
-- Accepted receipt checks are best-effort. Overlapping Hook processes may race
+- Attempt receipt checks are best-effort. Overlapping Hook processes may race
   and deliver a duplicate; MVP does not claim exactly-once delivery.
+- If attempt history cannot be read, Herald records `failed/internal_error`
+  without invoking the transport rather than risk an automatic retry.
 - Receipt persistence uses private directories/files and bounded NDJSON
   rotation. It is best-effort for individual destination failures but a hook
   input parse failure remains a fatal adapter error.
@@ -241,7 +270,8 @@ exception stack.
 
 - stdin is capped and parsed as the documented Codex Stop object.
 - Herald requires only `session_id`, `turn_id`, `hook_event_name = "Stop"`, and
-  `last_assistant_message`. Unknown and unrelated Codex fields are ignored.
+  `last_assistant_message`. It optionally allowlists `cwd` solely to derive a
+  cleaned project basename. Unknown and unrelated Codex fields are ignored.
 - stdout is always empty.
 - Exit `0` after routing completes, even when one or more destinations fail;
   those failures are represented by receipts.

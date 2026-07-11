@@ -14,6 +14,7 @@ const event: LifecycleEvent = {
   type: "turn.finished",
   source: "codex",
   sourceEvent: "Stop",
+  project: "herald",
   occurredAt: "2026-07-11T00:00:00.000Z",
   summary: "Done",
 };
@@ -121,7 +122,7 @@ describe("routeEvent", () => {
     assert.equal(JSON.stringify(receipts).includes("canary"), false);
   });
 
-  it("skips an event already accepted by the destination", async () => {
+  it("skips an event already attempted by the destination", async () => {
     let sends = 0;
     const store = new MemoryReceipts(new Set(["evt-1:ops"]));
     const deps = dependencies({
@@ -150,11 +151,37 @@ describe("routeEvent", () => {
     assert.equal(receipts[0]?.code, "duplicate_event");
   });
 
-  it("still delivers when the accepted receipt lookup is unavailable", async () => {
+  it("does not retry a failed event on a repeated invocation", async () => {
+    let sends = 0;
+    const store = new MemoryReceipts();
+    const deps = dependencies({
+      sendWebhook: async () => {
+        sends += 1;
+        return { status: "failed", code: "webhook_network_error" };
+      },
+    });
+    const config = configWithRoutes([
+      {
+        events: ["turn.finished"],
+        destinations: ["ops"],
+        template: "compact",
+      },
+    ]);
+
+    const [first] = await routeEvent(config, event, notification, deps, store);
+    const [repeated] = await routeEvent(config, event, notification, deps, store);
+
+    assert.equal(sends, 1);
+    assert.equal(first?.status, "failed");
+    assert.equal(repeated?.status, "skipped");
+    assert.equal(repeated?.code, "duplicate_event");
+  });
+
+  it("fails without sending when the attempted receipt lookup is unavailable", async () => {
     let sends = 0;
     const items: DeliveryReceipt[] = [];
     const store: ReceiptRepository = {
-      async hasAccepted() {
+      async hasAttempted() {
         throw new Error("receipt lookup unavailable");
       },
       async append(receipt) {
@@ -181,8 +208,9 @@ describe("routeEvent", () => {
       store,
     );
 
-    assert.equal(sends, 1);
-    assert.equal(receipt?.status, "accepted");
+    assert.equal(sends, 0);
+    assert.equal(receipt?.status, "failed");
+    assert.equal(receipt?.code, "internal_error");
     assert.deepEqual(items, [receipt]);
   });
 
@@ -247,14 +275,17 @@ describe("routeEvent", () => {
 class MemoryReceipts implements ReceiptRepository {
   readonly items: DeliveryReceipt[] = [];
 
-  constructor(private readonly accepted = new Set<string>()) {}
+  constructor(private readonly attempted = new Set<string>()) {}
 
-  async hasAccepted(eventId: string, destination: string): Promise<boolean> {
-    return this.accepted.has(`${eventId}:${destination}`);
+  async hasAttempted(eventId: string, destination: string): Promise<boolean> {
+    return this.attempted.has(`${eventId}:${destination}`);
   }
 
   async append(receipt: DeliveryReceipt): Promise<void> {
     this.items.push(receipt);
+    if (receipt.destination) {
+      this.attempted.add(`${receipt.eventId}:${receipt.destination}`);
+    }
   }
 }
 

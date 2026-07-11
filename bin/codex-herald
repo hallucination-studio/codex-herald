@@ -15814,16 +15814,20 @@ function minimalEnvironment() {
 // src/core/normalize.ts
 import { Buffer as Buffer2 } from "node:buffer";
 import { createHash } from "node:crypto";
+import { basename as basename2 } from "node:path";
 
 // src/domain/types.ts
 var EVENT_TYPE = "turn.finished";
 
 // src/core/normalize.ts
 var MAX_CODEX_STOP_INPUT_BYTES = 1024 * 1024;
+var MAX_PROJECT_CHARS = 80;
+var UNKNOWN_PROJECT = "Unknown";
 var CodexStopInputSchema = external_exports.object({
   session_id: external_exports.string().min(1),
   hook_event_name: external_exports.literal("Stop"),
   turn_id: external_exports.string().min(1),
+  cwd: external_exports.string().optional(),
   last_assistant_message: external_exports.string().nullable()
 });
 function parseCodexStopText(text) {
@@ -15861,9 +15865,20 @@ function normalizeCodexStop(input, occurredAt) {
     type: EVENT_TYPE,
     source: "codex",
     sourceEvent: "Stop",
+    project: projectFromCwd(input.cwd),
     occurredAt: occurredAt.toISOString(),
     summary: input.last_assistant_message
   };
+}
+function projectFromCwd(cwd) {
+  if (!cwd) {
+    return UNKNOWN_PROJECT;
+  }
+  const project = basename2(cwd).replace(new RegExp("\\p{Cf}+", "gu"), "").replace(new RegExp("\\p{Cc}+", "gu"), " ").replace(/\s+/gu, " ").trim();
+  if (!project) {
+    return UNKNOWN_PROJECT;
+  }
+  return Array.from(project).slice(0, MAX_PROJECT_CHARS).join("");
 }
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -15871,7 +15886,7 @@ function sha256(value) {
 
 // src/core/privacy.ts
 var GENERIC_NOTIFICATION_BODY = "A Codex turn finished.";
-var NOTIFICATION_TITLE = "Codex turn finished";
+var NOTIFICATION_TITLE = "Codex Herald";
 var REDACTED = "[REDACTED]";
 var SECRET_PATTERNS = [
   [
@@ -15894,27 +15909,44 @@ var SECRET_PATTERNS = [
 ];
 function applyPrivacy(event, policy) {
   if (!policy.includeSummary || event.summary === null) {
-    return genericNotification();
+    return stopNotification(event.project, GENERIC_NOTIFICATION_BODY, false);
   }
   const summary = sanitizeSummary(event.summary);
   if (summary.length === 0) {
-    return genericNotification();
+    return stopNotification(event.project, GENERIC_NOTIFICATION_BODY, false);
   }
   const codePoints = Array.from(summary);
   const truncated = codePoints.length > policy.maxChars;
+  return stopNotification(
+    event.project,
+    truncated ? codePoints.slice(0, policy.maxChars).join("") : summary,
+    truncated
+  );
+}
+function createDeliveryCheckNotification(transport) {
+  const destination = transport === "imessage" ? "iMessage" : "webhook";
+  return compactNotification(
+    "Codex Herald",
+    "Setup",
+    "Delivery check",
+    `Your ${destination} destination is configured and ready.`,
+    false
+  );
+}
+function stopNotification(project, summary, truncated) {
+  return compactNotification("Codex", project, "Turn finished", summary, truncated);
+}
+function compactNotification(source, project, event, summary, truncated) {
   return {
     title: NOTIFICATION_TITLE,
-    body: truncated ? codePoints.slice(0, policy.maxChars).join("") : summary,
+    body: `Source: ${source}
+Project: ${project}
+Event: ${event}
+
+Summary:
+${summary}`,
     severity: "info",
     truncated
-  };
-}
-function genericNotification() {
-  return {
-    title: NOTIFICATION_TITLE,
-    body: GENERIC_NOTIFICATION_BODY,
-    severity: "info",
-    truncated: false
   };
 }
 function sanitizeSummary(value) {
@@ -15954,7 +15986,19 @@ async function routeEvent(config2, event, notification, dependencies, receipts, 
       await receipts.append(receipt2);
       return receipt2;
     }
-    if (await hasAccepted(receipts, event.id, destinationId)) {
+    const attempt = await lookupAttempt(receipts, event.id, destinationId);
+    if (attempt === "unavailable") {
+      const receipt2 = createReceipt(
+        event,
+        destination,
+        { status: "failed", code: "internal_error" },
+        dependencies,
+        0
+      );
+      await receipts.append(receipt2);
+      return receipt2;
+    }
+    if (attempt === "attempted") {
       const receipt2 = createReceipt(
         event,
         destination,
@@ -15983,11 +16027,11 @@ async function routeEvent(config2, event, notification, dependencies, receipts, 
     return receipt;
   });
 }
-async function hasAccepted(receipts, eventId, destination) {
+async function lookupAttempt(receipts, eventId, destination) {
   try {
-    return await receipts.hasAccepted(eventId, destination);
+    return await receipts.hasAttempted(eventId, destination) ? "attempted" : "not_attempted";
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 function matchingDestinations(config2, event) {
@@ -16060,7 +16104,7 @@ var RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 var DIRECTORY_MODE2 = 448;
 var FILE_MODE2 = 384;
 var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
-var receiptQueues = /* @__PURE__ */ new Map();
+var receiptWriteLocks = /* @__PURE__ */ new Map();
 function resolveReceiptPath(environment = process.env, homeDirectory = homedir3()) {
   const override = nonEmpty(environment.CODEX_HERALD_RECEIPTS);
   if (override !== void 0) {
@@ -16080,7 +16124,7 @@ function requireAbsolutePath(value, name) {
   }
   return value;
 }
-function acceptedKey(eventId, destination) {
+function attemptKey(eventId, destination) {
   return JSON.stringify([eventId, destination]);
 }
 async function appendReceipt(receipt, receiptPath = resolveReceiptPath()) {
@@ -16113,7 +16157,7 @@ async function appendReceipt(receipt, receiptPath = resolveReceiptPath()) {
     }
   });
 }
-async function readAcceptedKeys(receiptPath = resolveReceiptPath()) {
+async function readAttemptedKeys(receiptPath = resolveReceiptPath()) {
   await ensurePrivateDirectory(receiptPath);
   return withReceiptLock(receiptPath, async () => {
     const keys = /* @__PURE__ */ new Set();
@@ -16123,9 +16167,9 @@ async function readAcceptedKeys(receiptPath = resolveReceiptPath()) {
         continue;
       }
       for (const line of contents.split("\n")) {
-        const accepted = parseAcceptedReceipt(line);
-        if (accepted !== void 0) {
-          keys.add(acceptedKey(accepted.eventId, accepted.destination));
+        const attempt = parseAttemptedReceipt(line);
+        if (attempt !== void 0) {
+          keys.add(attemptKey(attempt.eventId, attempt.destination));
         }
       }
     }
@@ -16133,20 +16177,20 @@ async function readAcceptedKeys(receiptPath = resolveReceiptPath()) {
   });
 }
 function createReceiptRepository(receiptPath = resolveReceiptPath()) {
-  let acceptedKeys;
-  const loadAcceptedKeys = () => {
-    acceptedKeys ??= readAcceptedKeys(receiptPath);
-    return acceptedKeys;
+  let attemptedKeys;
+  const loadAttemptedKeys = () => {
+    attemptedKeys ??= readAttemptedKeys(receiptPath);
+    return attemptedKeys;
   };
   return {
-    async hasAccepted(eventId, destination) {
-      return (await loadAcceptedKeys()).has(acceptedKey(eventId, destination));
+    async hasAttempted(eventId, destination) {
+      return (await loadAttemptedKeys()).has(attemptKey(eventId, destination));
     },
     async append(receipt) {
       await appendReceipt(receipt, receiptPath);
-      if (acceptedKeys && receipt.status === "accepted" && receipt.destination) {
+      if (attemptedKeys && receipt.destination) {
         try {
-          (await acceptedKeys).add(acceptedKey(receipt.eventId, receipt.destination));
+          (await attemptedKeys).add(attemptKey(receipt.eventId, receipt.destination));
         } catch {
         }
       }
@@ -16242,7 +16286,7 @@ async function readPrivateFile(path) {
     throw error51;
   }
   if (!information.isFile() || information.isSymbolicLink()) {
-    return void 0;
+    throw new Error("Receipt history path must be a regular file");
   }
   const handle = await open3(path, constants3.O_RDONLY | NO_FOLLOW2);
   try {
@@ -16251,7 +16295,7 @@ async function readPrivateFile(path) {
     await handle.close();
   }
 }
-function parseAcceptedReceipt(line) {
+function parseAttemptedReceipt(line) {
   if (line.trim() === "") {
     return void 0;
   }
@@ -16264,31 +16308,30 @@ function parseAcceptedReceipt(line) {
   if (!isRecord(value)) {
     return void 0;
   }
-  if (value.schemaVersion !== 1 || value.eventType !== "turn.finished" || value.status !== "accepted" || typeof value.eventId !== "string" || value.eventId.length === 0 || typeof value.destination !== "string" || value.destination.length === 0) {
+  if (value.schemaVersion !== 1 || value.eventType !== "turn.finished" || value.status !== "accepted" && value.status !== "failed" && value.status !== "skipped" || typeof value.eventId !== "string" || value.eventId.length === 0 || typeof value.destination !== "string" || value.destination.length === 0 || typeof value.code !== "string" || value.code.length === 0) {
     return void 0;
   }
-  const webhookAccepted = value.transport === "webhook" && value.driver === "node-http" && value.code === "webhook_accepted";
-  const imessageAccepted = value.transport === "imessage" && value.driver === "imsg" && value.code === "imsg_accepted";
-  if (!webhookAccepted && !imessageAccepted) {
+  const validAdapter = value.transport === "webhook" && value.driver === "node-http" || value.transport === "imessage" && value.driver === "imsg";
+  if (!validAdapter) {
     return void 0;
   }
   return { eventId: value.eventId, destination: value.destination };
 }
 async function withReceiptLock(receiptPath, action) {
-  const previous = receiptQueues.get(receiptPath) ?? Promise.resolve();
+  const previous = receiptWriteLocks.get(receiptPath) ?? Promise.resolve();
   let release;
   const current = new Promise((resolve) => {
     release = resolve;
   });
   const tail = previous.then(() => current);
-  receiptQueues.set(receiptPath, tail);
+  receiptWriteLocks.set(receiptPath, tail);
   await previous;
   try {
     return await action();
   } finally {
     release?.();
-    if (receiptQueues.get(receiptPath) === tail) {
-      receiptQueues.delete(receiptPath);
+    if (receiptWriteLocks.get(receiptPath) === tail) {
+      receiptWriteLocks.delete(receiptPath);
     }
   }
 }
@@ -16411,7 +16454,8 @@ async function sendIMessage(destination, _event, notification, platform = proces
       "--to",
       destination.recipient,
       "--text",
-      notification.body,
+      `${notification.title}
+${notification.body}`,
       "--service",
       "imessage",
       "--json"
@@ -16669,7 +16713,6 @@ function failureCode(signal, fallback) {
 
 // src/cli.ts
 var VERSION = "0.1.0";
-var TEST_NOTIFICATION_BODY = "Test notification from Codex Herald.";
 var HELP = `Usage:
   codex-herald setup [--config <path>] [--force] [--imessage-recipient <recipient>]
   codex-herald test <destination> [--config <path>] [--json]
@@ -16820,7 +16863,8 @@ async function runDestinationTest(args, io, runtime) {
 }
 async function testDestination(destinationId, configOptions, json2, io, runtime) {
   const loaded = await loadConfig(configOptions);
-  if (!loaded.config.destinations[destinationId]) {
+  const destination = loaded.config.destinations[destinationId];
+  if (!destination) {
     throw new HeraldError(
       "DESTINATION_NOT_FOUND",
       `Unknown destination: ${destinationId}`
@@ -16831,15 +16875,11 @@ async function testDestination(destinationId, configOptions, json2, io, runtime)
     type: "turn.finished",
     source: "codex",
     sourceEvent: "Stop",
+    project: "Setup",
     occurredAt: runtime.now().toISOString(),
-    summary: TEST_NOTIFICATION_BODY
+    summary: null
   };
-  const notification = {
-    title: "Codex Herald test",
-    body: TEST_NOTIFICATION_BODY,
-    severity: "info",
-    truncated: false
-  };
+  const notification = createDeliveryCheckNotification(destination.transport);
   const config2 = {
     ...loaded.config,
     routes: [

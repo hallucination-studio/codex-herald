@@ -8,6 +8,7 @@ export interface CodexStopInput {
   session_id: string;
   hook_event_name: "Stop";
   turn_id: string;
+  cwd?: string | undefined;
   last_assistant_message: string | null;
 }
 
@@ -16,6 +17,7 @@ export interface LifecycleEvent {
   type: EventType;
   source: "codex";
   sourceEvent: "Stop";
+  project: string;
   occurredAt: string;
   summary: string | null;
 }

@@ -61,7 +61,7 @@ behavior.
   connected. The probe receives no recipient, notification body, account alias,
   chat, or transcript data and fails closed when its result is unavailable.
 - Receipt directories and files are private and contain only allowlisted
-  metadata. Accepted receipt checks are best-effort; overlapping Hook processes
+  metadata. Attempt receipt checks are best-effort; overlapping Hook processes
   may deliver a duplicate.
 - iMessage is disabled outside macOS. On macOS, the user PATH is an explicit
   trust boundary. Herald resolves `imsg` to an absolute path and runs fixed argv
@@ -71,12 +71,15 @@ behavior.
 
 - Prompt and transcript inclusion are unsupported in MVP.
 - Only `last_assistant_message` may become a summary.
+- Only the cleaned, 80-code-point final component of `cwd` may become the
+  project label; the complete working-directory path is discarded.
 - The summary is truncated before adapter invocation.
 - Message bodies are passed in memory and are not written to receipt storage.
-- The upstream `imsg` CLI accepts message text through `--text`, so the body is
-  briefly present in that child process's argument list. Herald limits the
-  child environment and never invokes a shell, but same-user process inspection
-  remains a local-host consideration for highly sensitive summaries.
+- The upstream `imsg` CLI accepts message text through `--text`, so the compact
+  title and body are briefly present in that child process's argument list.
+  Herald limits the child environment and never invokes a shell, but same-user
+  process inspection remains a local-host consideration for highly sensitive
+  summaries.
 - Common secret redaction may reduce accidental leakage, but it is not a DLP
   guarantee; route only to destinations you trust.
 

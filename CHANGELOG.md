@@ -33,6 +33,11 @@ Initial MVP.
 - Prevented disconnected or disabled Messages accounts from producing false
   iMessage acceptance receipts by checking live account readiness before every
   send and during `doctor`.
+- Made lifecycle iMessages self-identifying with a fixed Codex Herald title,
+  source, sanitized project basename, event, and summary; setup checks use an
+  explicit Setup context.
+- Prevented repeated Hook invocations from retrying an event after a recorded
+  failed attempt; explicit CLI tests still create a fresh test event.
 - Kept every ingest failure on exit code 1 with empty stdout so Codex never
   interprets a usage error as a Stop continuation request.
 - Made the packaged CLI recognize canonicalized and symlinked entry paths.

@@ -11,7 +11,7 @@ export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
-const receiptQueues = new Map<string, Promise<void>>();
+const receiptWriteLocks = new Map<string, Promise<void>>();
 
 export function resolveReceiptPath(
   environment: NodeJS.ProcessEnv = process.env,
@@ -42,7 +42,7 @@ function requireAbsolutePath(value: string, name: string): string {
   return value;
 }
 
-export function acceptedKey(eventId: string, destination: string): string {
+export function attemptKey(eventId: string, destination: string): string {
   return JSON.stringify([eventId, destination]);
 }
 
@@ -81,7 +81,7 @@ export async function appendReceipt(
   });
 }
 
-export async function readAcceptedKeys(
+export async function readAttemptedKeys(
   receiptPath = resolveReceiptPath(),
 ): Promise<Set<string>> {
   await ensurePrivateDirectory(receiptPath);
@@ -94,9 +94,9 @@ export async function readAcceptedKeys(
       }
 
       for (const line of contents.split("\n")) {
-        const accepted = parseAcceptedReceipt(line);
-        if (accepted !== undefined) {
-          keys.add(acceptedKey(accepted.eventId, accepted.destination));
+        const attempt = parseAttemptedReceipt(line);
+        if (attempt !== undefined) {
+          keys.add(attemptKey(attempt.eventId, attempt.destination));
         }
       }
     }
@@ -107,23 +107,23 @@ export async function readAcceptedKeys(
 export function createReceiptRepository(
   receiptPath = resolveReceiptPath(),
 ): ReceiptRepository {
-  let acceptedKeys: Promise<Set<string>> | undefined;
-  const loadAcceptedKeys = () => {
-    acceptedKeys ??= readAcceptedKeys(receiptPath);
-    return acceptedKeys;
+  let attemptedKeys: Promise<Set<string>> | undefined;
+  const loadAttemptedKeys = () => {
+    attemptedKeys ??= readAttemptedKeys(receiptPath);
+    return attemptedKeys;
   };
 
   return {
-    async hasAccepted(eventId, destination) {
-      return (await loadAcceptedKeys()).has(acceptedKey(eventId, destination));
+    async hasAttempted(eventId, destination) {
+      return (await loadAttemptedKeys()).has(attemptKey(eventId, destination));
     },
     async append(receipt) {
       await appendReceipt(receipt, receiptPath);
-      if (acceptedKeys && receipt.status === "accepted" && receipt.destination) {
+      if (attemptedKeys && receipt.destination) {
         try {
-          (await acceptedKeys).add(acceptedKey(receipt.eventId, receipt.destination));
+          (await attemptedKeys).add(attemptKey(receipt.eventId, receipt.destination));
         } catch {
-          // A failed best-effort lookup must not turn a recorded send into failure.
+          // A failed best-effort lookup must not turn a recorded attempt into failure.
         }
       }
     },
@@ -232,7 +232,7 @@ async function readPrivateFile(path: string): Promise<string | undefined> {
   }
 
   if (!information.isFile() || information.isSymbolicLink()) {
-    return undefined;
+    throw new Error("Receipt history path must be a regular file");
   }
 
   const handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
@@ -243,7 +243,7 @@ async function readPrivateFile(path: string): Promise<string | undefined> {
   }
 }
 
-function parseAcceptedReceipt(
+function parseAttemptedReceipt(
   line: string,
 ): { eventId: string; destination: string } | undefined {
   if (line.trim() === "") {
@@ -263,24 +263,23 @@ function parseAcceptedReceipt(
   if (
     value.schemaVersion !== 1 ||
     value.eventType !== "turn.finished" ||
-    value.status !== "accepted" ||
+    (value.status !== "accepted" &&
+      value.status !== "failed" &&
+      value.status !== "skipped") ||
     typeof value.eventId !== "string" ||
     value.eventId.length === 0 ||
     typeof value.destination !== "string" ||
-    value.destination.length === 0
+    value.destination.length === 0 ||
+    typeof value.code !== "string" ||
+    value.code.length === 0
   ) {
     return undefined;
   }
 
-  const webhookAccepted =
-    value.transport === "webhook" &&
-    value.driver === "node-http" &&
-    value.code === "webhook_accepted";
-  const imessageAccepted =
-    value.transport === "imessage" &&
-    value.driver === "imsg" &&
-    value.code === "imsg_accepted";
-  if (!webhookAccepted && !imessageAccepted) {
+  const validAdapter =
+    (value.transport === "webhook" && value.driver === "node-http") ||
+    (value.transport === "imessage" && value.driver === "imsg");
+  if (!validAdapter) {
     return undefined;
   }
 
@@ -291,21 +290,21 @@ async function withReceiptLock<T>(
   receiptPath: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  const previous = receiptQueues.get(receiptPath) ?? Promise.resolve();
+  const previous = receiptWriteLocks.get(receiptPath) ?? Promise.resolve();
   let release: (() => void) | undefined;
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
   const tail = previous.then(() => current);
-  receiptQueues.set(receiptPath, tail);
+  receiptWriteLocks.set(receiptPath, tail);
 
   await previous;
   try {
     return await action();
   } finally {
     release?.();
-    if (receiptQueues.get(receiptPath) === tail) {
-      receiptQueues.delete(receiptPath);
+    if (receiptWriteLocks.get(receiptPath) === tail) {
+      receiptWriteLocks.delete(receiptPath);
     }
   }
 }

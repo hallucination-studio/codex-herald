@@ -1,8 +1,13 @@
-import type { LifecycleEvent, Notification, PrivacyPolicy } from "../domain/types.js";
+import type {
+  LifecycleEvent,
+  Notification,
+  PrivacyPolicy,
+  Transport,
+} from "../domain/types.js";
 
 export const GENERIC_NOTIFICATION_BODY = "A Codex turn finished.";
 
-const NOTIFICATION_TITLE = "Codex turn finished";
+const NOTIFICATION_TITLE = "Codex Herald";
 const REDACTED = "[REDACTED]";
 
 const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -30,31 +35,57 @@ export function applyPrivacy(
   policy: PrivacyPolicy,
 ): Notification {
   if (!policy.includeSummary || event.summary === null) {
-    return genericNotification();
+    return stopNotification(event.project, GENERIC_NOTIFICATION_BODY, false);
   }
 
   const summary = sanitizeSummary(event.summary);
   if (summary.length === 0) {
-    return genericNotification();
+    return stopNotification(event.project, GENERIC_NOTIFICATION_BODY, false);
   }
 
   const codePoints = Array.from(summary);
   const truncated = codePoints.length > policy.maxChars;
 
-  return {
-    title: NOTIFICATION_TITLE,
-    body: truncated ? codePoints.slice(0, policy.maxChars).join("") : summary,
-    severity: "info",
+  return stopNotification(
+    event.project,
+    truncated ? codePoints.slice(0, policy.maxChars).join("") : summary,
     truncated,
-  };
+  );
 }
 
-function genericNotification(): Notification {
+export function createDeliveryCheckNotification(transport: Transport): Notification {
+  const destination = transport === "imessage" ? "iMessage" : "webhook";
+  return compactNotification(
+    "Codex Herald",
+    "Setup",
+    "Delivery check",
+    `Your ${destination} destination is configured and ready.`,
+    false,
+  );
+}
+
+function stopNotification(
+  project: string,
+  summary: string,
+  truncated: boolean,
+): Notification {
+  return compactNotification("Codex", project, "Turn finished", summary, truncated);
+}
+
+function compactNotification(
+  source: string,
+  project: string,
+  event: string,
+  summary: string,
+  truncated: boolean,
+): Notification {
   return {
     title: NOTIFICATION_TITLE,
-    body: GENERIC_NOTIFICATION_BODY,
+    body:
+      `Source: ${source}\nProject: ${project}\nEvent: ${event}\n\n` +
+      `Summary:\n${summary}`,
     severity: "info",
-    truncated: false,
+    truncated,
   };
 }
 

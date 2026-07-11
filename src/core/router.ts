@@ -13,7 +13,7 @@ import type {
 const DEFAULT_CONCURRENCY = 8;
 
 export interface ReceiptRepository {
-  hasAccepted(eventId: string, destination: string): Promise<boolean>;
+  hasAttempted(eventId: string, destination: string): Promise<boolean>;
   append(receipt: DeliveryReceipt): Promise<void>;
 }
 
@@ -53,7 +53,19 @@ export async function routeEvent(
       return receipt;
     }
 
-    if (await hasAccepted(receipts, event.id, destinationId)) {
+    const attempt = await lookupAttempt(receipts, event.id, destinationId);
+    if (attempt === "unavailable") {
+      const receipt = createReceipt(
+        event,
+        destination,
+        { status: "failed", code: "internal_error" },
+        dependencies,
+        0,
+      );
+      await receipts.append(receipt);
+      return receipt;
+    }
+    if (attempt === "attempted") {
       const receipt = createReceipt(
         event,
         destination,
@@ -85,15 +97,17 @@ export async function routeEvent(
   });
 }
 
-async function hasAccepted(
+async function lookupAttempt(
   receipts: ReceiptRepository,
   eventId: string,
   destination: string,
-): Promise<boolean> {
+): Promise<"attempted" | "not_attempted" | "unavailable"> {
   try {
-    return await receipts.hasAccepted(eventId, destination);
+    return (await receipts.hasAttempted(eventId, destination))
+      ? "attempted"
+      : "not_attempted";
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 
