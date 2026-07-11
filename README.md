@@ -336,6 +336,28 @@ Herald itself never returns <code>decision: "block"</code>,
 <code>continue: false</code>, or exit code <code>2</code> from its packaged
 Hook invocation.
 
+## Other Codex lifecycle hooks worth knowing
+
+Codex calls these **lifecycle hooks**; they are not webhook transports. Herald
+0.1.0 consumes only <code>Stop</code>. The following hooks are useful context
+for users evaluating possible future outbound notifications:
+
+| Hook | When it runs | Why a user might care | Caution |
+| --- | --- | --- | --- |
+| <code>PermissionRequest</code> | Codex requests permission for a tool | Alert when a task is waiting for approval | Tool arguments may be sensitive; repeated requests can be noisy |
+| <code>SubagentStart</code> / <code>SubagentStop</code> | A delegated subagent starts or is about to finish | Track background or delegated work | A stopped subagent does not mean the parent turn is finished |
+| <code>SessionStart</code> | A session starts, resumes, clears, or returns from compaction | Audit or announce session lifecycle changes | This is a session event, not a delivery-complete signal |
+| <code>PostToolUse</code> | A tool finishes executing | Notice that a long-running tool step completed | Often high volume, and tool results can contain private data |
+| <code>PreCompact</code> / <code>PostCompact</code> | Before or after manual or automatic context compaction | Observe context-lifecycle changes | Usually operational telemetry rather than a user notification |
+| <code>UserPromptSubmit</code> | A user submits a prompt | Audit explicit user activity | Prompts are privacy-sensitive; Herald's MVP never includes them |
+
+Codex can filter several of these events with matchers—for example by tool
+name, subagent type, session-start source, or manual versus automatic
+compaction. Any future Herald support should remain explicitly opt-in per event
+so the product does not become a noisy general workflow engine. See the
+official [Codex Hooks documentation](https://developers.openai.com/codex/hooks)
+for the current event schemas.
+
 ## Hook stdout and exit contract
 
 <code>ingest</code> reads one size-bounded JSON object from stdin and is silent
