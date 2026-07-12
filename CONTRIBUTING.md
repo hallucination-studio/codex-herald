@@ -21,7 +21,7 @@ end-user delivery.
 ## Prerequisites
 
 - Node.js 22 or newer
-- npm 11 (the repository pins <code>npm@11.6.2</code>)
+- npm 11 (the repository pins <code>npm@11.18.0</code>)
 - macOS 14 or newer plus imsg only when manually exercising iMessage
 - A Codex client with lifecycle Hook support for plugin integration testing
 
