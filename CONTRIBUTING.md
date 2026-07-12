@@ -76,8 +76,10 @@ Run the built CLI directly:
 - Do not make destination failures alter Codex continuation behavior.
 - Do not add a delivery queue, automatic retry, receipt store, or other runtime
   delivery history.
-- Update the generated <code>bin/codex-herald</code> with
-  <code>npm run build</code> when source behavior changes.
+- Generate the ignored <code>bin/codex-herald</code> bundle with
+  <code>npm run build</code> before using a source checkout as a local plugin.
+  Release packaging builds the same executable through <code>prepack</code>;
+  do not commit the generated bundle.
 
 Use commit subjects such as <code>feat: ...</code>, <code>fix: ...</code>,
 <code>test: ...</code>, and <code>docs: ...</code>. Keep refactors separate
