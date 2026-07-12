@@ -46,7 +46,9 @@ jobs:
       - name: Pack release artifact
         id: package
         run: |
-          npm pack --json > pack.json
+          npm run prepack
+          # Keep lifecycle output out of the machine-readable npm pack result.
+          npm pack --json --ignore-scripts > pack.json
           tarball="$(node -e 'const value = require("./pack.json"); process.stdout.write(value[0].filename)')"
           integrity="$(node -e 'const value = require("./pack.json"); process.stdout.write(value[0].integrity)')"
           test -f "${tarball}"
