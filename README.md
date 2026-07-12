@@ -11,9 +11,8 @@ destinations. It has no delivery queue, automatic retry, receipt store, or
 other runtime delivery history.
 
 The project, npm package, CLI, and plugin slug are all
-<code>codex-herald</code>. Version 0.1.0 is currently **unreleased**; use a
-source checkout for development. There is not yet a published npm package or a
-public Codex marketplace entry.
+<code>codex-herald</code>. Version 0.1.0 is available on npm. A public Codex
+marketplace entry is not yet available.
 
 ## Product boundary
 
@@ -117,8 +116,7 @@ that grants any group or other-user permissions, including read-only access.
 
 ## Quick start with npx
 
-After the npm release is published, download the CLI and create the private
-user configuration in one command:
+Download the CLI and create the private user configuration in one command:
 
 ~~~bash
 npx --yes codex-herald@latest setup
@@ -167,8 +165,7 @@ the config file with mode <code>0600</code>. Re-running it will not replace an
 existing config unless you explicitly pass <code>--force</code>.
 
 Running the CLI with <code>npx</code> does not by itself install or enable the
-bundled Codex plugin. Version 0.1.0 is still unreleased, so the command above
-becomes available only after the npm package is published.
+bundled Codex plugin.
 
 After a Codex marketplace lists <code>codex-herald</code>, open the official
 plugin browser and install it from that configured marketplace:

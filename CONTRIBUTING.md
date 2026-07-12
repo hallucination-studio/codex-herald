@@ -144,11 +144,11 @@ Pushing a tag whose name matches <code>v&lt;package version&gt;</code> runs the
 release workflow. It installs the lockfile, runs <code>make test</code>, packs one
 npm tarball, publishes that exact artifact, and attaches it to a generated
 GitHub Release. The repository must provide an Actions secret named
-<code>NPM_TOKEN</code>. For the first release, use an npm granular token with
-read/write access to all packages and enable bypass 2FA when the account or
-package requires 2FA for publishing. Provenance also requires the public GitHub
-repository to match the case-sensitive <code>repository.url</code> in
-<code>package.json</code>.
+<code>NPM_TOKEN</code>. Initial publication requires an npm granular token with
+read/write access to all packages; after <code>codex-herald</code> exists, the
+token may be narrowed to that package. Enable bypass 2FA when publishing
+requires it. Provenance also requires the public GitHub repository to match the
+case-sensitive <code>repository.url</code> in <code>package.json</code>.
 
 ## Pull request checklist
 

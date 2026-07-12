@@ -4,7 +4,7 @@ All notable changes to Codex Herald will be documented in this file. The
 project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-07-12
 
 Initial MVP.
 
@@ -58,7 +58,7 @@ Initial MVP.
 
 ### Known limitations
 
-- Version 0.1.0 has not yet been published to npm or a public Codex marketplace.
+- Codex Herald is not yet available through a public Codex marketplace.
 - Email, rich templates, inbound control, hosted delivery, and a public adapter
   SDK are outside the MVP.
 - iMessage delivery requires macOS 14 or newer and targets the imsg v0.12.3 CLI
